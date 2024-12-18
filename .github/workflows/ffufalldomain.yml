@@ -1,0 +1,118 @@
+name: Subdomain Enumeration and FFUF Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      domain:
+        description: "Domain to scan"
+        required: true
+      wordlist:
+        description: "Wordlist file path"
+        required: true
+
+jobs:
+  subdomain_enumeration:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Setup environment
+      run: |
+        sudo apt update && sudo apt install -y jq curl ffuf subfinder zip
+        mkdir -p ~/scan_results
+
+    - name: Validate inputs
+      run: |
+        if [[ -z "${{ github.event.inputs.domain }}" ]]; then
+          echo "Domain cannot be empty" && exit 1
+        fi
+        if [[ ! -f "${{ github.event.inputs.wordlist }}" ]]; then
+          echo "Wordlist file not found: ${{ github.event.inputs.wordlist }}" && exit 1
+        fi
+
+    - name: Subdomain enumeration and FFUF scan
+      run: |
+        domain="${{ github.event.inputs.domain }}"
+        wordlist="${{ github.event.inputs.wordlist }}"
+
+        # Create directory for the domain
+        domain_folder=$(echo "$domain" | tr '.' '_')
+        mkdir -p "~/scan_results/$domain_folder"
+
+        log() {
+          echo "[*] $1"
+        }
+
+        # Subdomain enumeration
+        log "Running Subfinder..."
+        subfinder -d "$domain" -silent > "~/scan_results/$domain_folder/subfinder.txt"
+
+        log "Fetching results from crt.sh..."
+        curl -s -m 10 "https://crt.sh/?q=%25.$domain&output=json" | \
+          jq -r '.[].name_value' | sed 's/\*\.//g' > "~/scan_results/$domain_folder/crtsh.txt"
+
+        log "Fetching subdomains from RapidDNS..."
+        output_file="~/scan_results/$domain_folder/rapid.txt"
+        > "$output_file"
+
+        # Improved RapidDNS scraping
+        max_pages=10
+        for ((page=1; page<=max_pages; page++)); do
+          log "Fetching page $page of RapidDNS..."
+          curl -s -m 5 "https://rapiddns.io/subdomain/$domain?page=$page" | \
+          grep -oP '(?<=<td>)[^<]+(?=</td>)' | \
+          grep -E '^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$' >> "$output_file"
+          sleep 1
+        done
+
+        # Combine and deduplicate subdomains
+        log "Consolidating subdomains..."
+        cat ~/scan_results/$domain_folder/*.txt | sort -u > ~/scan_results/$domain_folder/all_subdomains.txt
+
+        # Verify if subdomains were found
+        if [ ! -s "~/scan_results/$domain_folder/all_subdomains.txt" ]; then
+          log "No subdomains found for $domain"
+          exit 1
+        fi
+
+        # Logging number of discovered subdomains
+        subdomain_count=$(wc -l < ~/scan_results/$domain_folder/all_subdomains.txt)
+        log "Discovered $subdomain_count unique subdomains"
+
+        # Consolidated FFUF results
+        consolidated_ffuf="~/scan_results/$domain_folder/all_ffuf_results.json"
+        > "$consolidated_ffuf"
+
+        # Run FFUF on discovered subdomains
+        log "Running FFUF on discovered subdomains..."
+        while IFS= read -r subdomain; do
+          log "Scanning $subdomain..."
+          ffuf -u "https://$subdomain/FUZZ" \
+               -w "$wordlist" \
+               -o "~/scan_results/$domain_folder/ffuf_results_$subdomain.json" \
+               -json \
+               -timeout 3 \
+               -rate 50 \
+               -recursion \
+               -recursion-depth 2
+
+          # Append to consolidated results
+          cat "~/scan_results/$domain_folder/ffuf_results_$subdomain.json" >> "$consolidated_ffuf"
+        done < ~/scan_results/$domain_folder/all_subdomains.txt
+
+        log "FFUF scan completed. Consolidated results in $consolidated_ffuf"
+
+    - name: Compress results
+      run: |
+        zip -r ~/scan_results.zip ~/scan_results
+
+    - name: Send results to Telegram
+      env:
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        curl -F chat_id="$TELEGRAM_CHAT_ID" \
+             -F document=@"~/scan_results.zip" \
+             "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendDocument"
