@@ -39,7 +39,7 @@ jobs:
         mkdir -p "$HOME/scan_results"
 
         # Set hardcoded wordlist path
-        wordlist="wordlists/common.txt"
+        wordlist="wordlists/commmmon.txt"
         if [[ ! -f "$wordlist" ]]; then
           echo "Error: Wordlist file not found at $wordlist"
           exit 1
