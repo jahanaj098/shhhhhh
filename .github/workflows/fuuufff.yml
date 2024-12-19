@@ -104,7 +104,7 @@ jobs:
 
     - name: Download wordlist for ffuf
       run: |
-        curl -o common.txt https://github.com/jahanaj098/shhhhhh/blob/main/wordlists/common.txt
+        curl -o common.txt https://raw.githubusercontent.com/jahanaj098/shhhhhh/refs/heads/main/wordlists/common.txt
 
     - name: Fuzz with ffuf for 200 OK domains
       run: |
