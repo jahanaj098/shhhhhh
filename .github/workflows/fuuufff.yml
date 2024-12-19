@@ -1,76 +1,212 @@
-name: Fuzzing Automation with ffuf and Screenshot
-
+name: fufffitt
 on:
   workflow_dispatch:
     inputs:
       domain:
-        description: "Enter the domain"
+        description: 'Target domain to enumerate'
         required: true
-        default: "example.com"
+
+env:
+  TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
 jobs:
-  fuzzing_job:
+  enumerate:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v3
+      - uses: actions/checkout@v3
+      
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
 
-    - name: Create Domain Directory
-      run: |
-        mkdir -p "${{ github.event.inputs.domain }}"
-
-    - name: Extract Domains
-      run: |
-        echo "[*] Extracting domains for ${{ github.event.inputs.domain }}..."
-        # Example: Replace with your domain extraction logic
-        echo ${{ github.event.inputs.domain }} > "${{ github.event.inputs.domain }}/200.txt"
-        echo "test.${{ github.event.inputs.domain }}" > "${{ github.event.inputs.domain }}/other_status_codes.txt"
-
-    - name: Fuzz with ffuf for 200 OK domains
-      run: |
-        mkdir -p "${{ github.event.inputs.domain }}/fuzzing_200"
-        while read -r domain; do
-          echo "[*] Testing protocol for $domain..."
-          if curl -s --head --connect-timeout 5 http://$domain | grep "200 OK" > /dev/null; then
-            protocol="http"
-          elif curl -s --head --connect-timeout 5 https://$domain | grep "200 OK" > /dev/null; then
-            protocol="https"
-          else
-            echo "[-] Unable to determine protocol for $domain. Skipping..."
-            continue
-          fi
-
-          echo "[*] Fuzzing $protocol://$domain..."
-          ffuf -u "$protocol://$domain/FUZZ" -w common.txt -ac -mc 200 -o "${{ github.event.inputs.domain }}/fuzzing_200/results_$domain.json"
+      - name: Install Dependencies
+        run: |
+          # Install Go tools
+          go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+          go install github.com/projectdiscovery/httpx/cmd/httpx@latest
+          go install github.com/ffuf/ffuf@latest
           
-          # Check if any valid response received and take a screenshot
-          if [ -f "${{ github.event.inputs.domain }}/fuzzing_200/results_$domain.json" ]; then
-            puppeteer --headless --screenshot --output="${{ github.event.inputs.domain }}/fuzzing_200/screenshot_$domain.png" "$protocol://$domain/.htaccess"
-            curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" -F document=@"${{ github.event.inputs.domain }}/fuzzing_200/screenshot_$domain.png"
-          fi
-        done < "${{ github.event.inputs.domain }}/200.txt"
-
-    - name: Fuzz with ffuf for other status code domains
-      run: |
-        mkdir -p "${{ github.event.inputs.domain }}/fuzzing_other"
-        while read -r domain; do
-          echo "[*] Testing protocol for $domain..."
-          if curl -s --head --connect-timeout 5 http://$domain | grep "200 OK" > /dev/null; then
-            protocol="http"
-          elif curl -s --head --connect-timeout 5 https://$domain | grep "200 OK" > /dev/null; then
-            protocol="https"
-          else
-            echo "[-] Unable to determine protocol for $domain. Skipping..."
-            continue
-          fi
-
-          echo "[*] Fuzzing $protocol://$domain..."
-          ffuf -u "$protocol://$domain/FUZZ" -w common.txt -ac -mc 400-599 -o "${{ github.event.inputs.domain }}/fuzzing_other/results_$domain.json"
+          # Install Node.js and Playwright
+          npm install -g playwright
+          npx playwright install --with-deps chromium
           
-          # Check if any valid response received and take a screenshot
-          if [ -f "${{ github.event.inputs.domain }}/fuzzing_other/results_$domain.json" ]; then
-            puppeteer --headless --screenshot --output="${{ github.event.inputs.domain }}/fuzzing_other/screenshot_$domain.png" "$protocol://$domain/.htaccess"
-            curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" -F document=@"${{ github.event.inputs.domain }}/fuzzing_other/screenshot_$domain.png"
+          # Install other dependencies
+          sudo apt-get update
+          sudo apt-get install -y jq curl zip
+
+      - name: Create Working Directory
+        run: mkdir -p "${{ github.event.inputs.domain }}"
+
+      - name: Subdomain Enumeration
+        run: |
+          # Set domain variable for easier reference
+          domain="${{ github.event.inputs.domain }}"
+          
+          # Subfinder
+          echo "Running Subfinder..."
+          subfinder -d "$domain" > "$domain/subfinder.txt"
+          
+          # crt.sh
+          echo "Fetching results from crt.sh..."
+          curl -s "https://crt.sh/?q=%25.$domain&output=json" | jq -r '.[].name_value' | sed 's/\*\.//g' > "$domain/crtsh.txt"
+          
+          # RapidDNS enumeration with pagination
+          echo "Fetching subdomains from RapidDNS..."
+          subdomains_per_page=100
+          output_file="$domain/rapid.txt"
+          > "$output_file"
+          
+          # Fetch the total number of subdomains from the first page
+          response=$(curl -s "https://rapiddns.io/subdomain/$domain")
+          total_subdomains=$(echo "$response" | grep -oP '(?<=<span style="color: #39cfca; ">)[0-9,]+(?=</span>)' | sed 's/,//g')
+          
+          if [[ -n "$total_subdomains" ]]; then
+              total_pages=$(( (total_subdomains + subdomains_per_page - 1) / subdomains_per_page ))
+              
+              # Fetch all pages
+              for (( page=1; page<=total_pages; page++ )); do
+                  echo "Fetching page $page of $total_pages from RapidDNS..."
+                  curl -s "https://rapiddns.io/subdomain/$domain?page=$page" | \
+                  grep -oP '(?<=<td>)[^<]+(?=</td>)' | \
+                  grep -E '^[a-zA-Z0-9.-]+[.][a-zA-Z]{2,}$' | \
+                  sed 's/^[ \t]*//;s/[ \t]*$//' >> "$output_file"
+                  
+                  # Add delay to avoid rate limiting
+                  sleep 2
+              done
+          else
+              echo "Could not determine the total number of subdomains from RapidDNS."
           fi
-        done < "${{ github.event.inputs.domain }}/other_status_codes.txt"
+          
+          # Combine and deduplicate results
+          echo "Combining and deduplicating results..."
+          cat "$domain"/*.txt | sort -u > subdomains.txt
+          
+          # Count results
+          total_subdomains=$(wc -l < subdomains.txt)
+          echo "Total unique subdomains found: $total_subdomains"
+
+      - name: Send Subdomains to Telegram
+        run: |
+          curl -F document=@"subdomains.txt" \
+            "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendDocument" \
+            -F chat_id="${TELEGRAM_CHAT_ID}" \
+            -F caption="Discovered subdomains for ${{ github.event.inputs.domain }}"
+
+      - name: Check Domain Status Codes
+        run: |
+          echo "Checking HTTP status codes..."
+          cat subdomains.txt | httpx -silent -status-code -no-color -follow-redirects -timeout 10 | tee http_status.txt
+          grep " 200" http_status.txt | cut -d' ' -f1 > 200.txt
+          grep -v " 200" http_status.txt | cut -d' ' -f1 > other_status_codes.txt
+          
+          # Count results
+          echo "Domains with 200 status: $(wc -l < 200.txt)"
+          echo "Domains with other status codes: $(wc -l < other_status_codes.txt)"
+
+      - name: Send Status Code Files to Telegram
+        run: |
+          for file in 200.txt other_status_codes.txt; do
+            curl -F document=@"$file" \
+              "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendDocument" \
+              -F chat_id="${TELEGRAM_CHAT_ID}" \
+              -F caption="Status code results: $file for ${{ github.event.inputs.domain }}"
+          done
+
+      - name: Download Wordlist
+        run: |
+          echo "Downloading wordlist..."
+          curl -o wordlist.txt https://raw.githubusercontent.com/v0re/dirb/refs/heads/master/wordlists/common.txt
+          echo "Wordlist size: $(wc -l < wordlist.txt) words"
+
+      - name: Fuzzing and Screenshots
+        run: |
+          mkdir -p results
+          
+          process_domain() {
+            local domain=$1
+            local output_dir="results/${domain}"
+            mkdir -p "$output_dir"
+            
+            echo "Processing domain: $domain"
+            
+            # Fuzzing
+            echo "Starting fuzzing for $domain..."
+            ffuf -u "https://${domain}/FUZZ" \
+              -w wordlist.txt \
+              -ac \
+              -o "${output_dir}/fuzzing.json" \
+              -of json \
+              -t 50 \
+              -c \
+              -v
+            
+            # Screenshot matches
+            if [ -f "${output_dir}/fuzzing.json" ]; then
+              echo "Taking screenshots of discovered endpoints for $domain..."
+              cat "${output_dir}/fuzzing.json" | jq -r '.results[].url' | while read url; do
+                echo "Capturing screenshot of $url"
+                node -e "
+                  const { chromium } = require('playwright');
+                  (async () => {
+                    const browser = await chromium.launch();
+                    const page = await browser.newPage();
+                    try {
+                      await page.goto('${url}', {
+                        waitUntil: 'networkidle',
+                        timeout: 30000
+                      });
+                      await page.screenshot({
+                        path: '${output_dir}/' + new URL('${url}').pathname.replace(/\//g, '_') + '.png',
+                        fullPage: true
+                      });
+                      console.log('Successfully captured screenshot of ${url}');
+                    } catch (e) {
+                      console.error('Failed to screenshot ${url}:', e.message);
+                    } finally {
+                      await browser.close();
+                    }
+                  })().catch(console.error);
+                "
+                # Add delay between screenshots
+                sleep 2
+              done
+            else
+              echo "No fuzzing results found for $domain"
+            fi
+          }
+          
+          # Process domains from both files
+          for file in 200.txt other_status_codes.txt; do
+            echo "Processing domains from $file..."
+            while read domain; do
+              process_domain "$domain"
+              # Add delay between domains
+              sleep 5
+            done < "$file"
+          done
+
+      - name: Create Final Archive
+        run: |
+          echo "Creating final archive..."
+          zip -r final.zip results/
+          echo "Archive size: $(du -h final.zip | cut -f1)"
+          
+          # Send to Telegram
+          curl -F document=@"final.zip" \
+            "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendDocument" \
+            -F chat_id="${TELEGRAM_CHAT_ID}" \
+            -F caption="Final results for ${{ github.event.inputs.domain }}"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: enumeration-results
+          path: |
+            subdomains.txt
+            200.txt
+            other_status_codes.txt
+            final.zip
+            */fuzzing.json
