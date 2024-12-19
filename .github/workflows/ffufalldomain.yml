@@ -30,11 +30,10 @@ jobs:
         echo "/usr/local/go/bin" >> $GITHUB_PATH
         echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
-        # Install FFUF
+        # Install required tools
         go install github.com/ffuf/ffuf/v2@latest
-
-        # Install Subfinder
         go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+        go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
 
         # Create results directory
         mkdir -p "$HOME/scan_results"
@@ -65,8 +64,17 @@ jobs:
           local command=$1
           if [ $exit_code -ne 0 ]; then
             log "Warning: $command failed with exit code $exit_code"
-            # Don't exit, just continue with the next source
           fi
+        }
+
+        # Function to send file to Telegram
+        send_to_telegram() {
+          local file="$1"
+          local caption="$2"
+          curl -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+               -F document=@"$file" \
+               -F caption="$caption" \
+               "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument"
         }
 
         # Subdomain enumeration
@@ -81,7 +89,6 @@ jobs:
           grep -v "^$" > "$HOME/scan_results/$domain_folder/crtsh.txt" || \
           handle_error "crt.sh"
 
-        # Modified RapidDNS scraping
         log "Fetching subdomains from RapidDNS..."
         output_file="$HOME/scan_results/$domain_folder/rapid.txt"
         touch "$output_file"
@@ -105,20 +112,34 @@ jobs:
           echo "$domain" > "$HOME/scan_results/$domain_folder/all_subdomains.txt"
         fi
 
-        # Logging number of discovered subdomains
+        # Count discovered subdomains
         subdomain_count=$(wc -l < "$HOME/scan_results/$domain_folder/all_subdomains.txt")
         log "Discovered $subdomain_count unique subdomains"
 
-        # Show first few subdomains as verification
-        log "Sample of discovered subdomains:"
-        head -n 5 "$HOME/scan_results/$domain_folder/all_subdomains.txt"
+        # Send all subdomains to Telegram
+        send_to_telegram "$HOME/scan_results/$domain_folder/all_subdomains.txt" "Found $subdomain_count subdomains for $domain"
+
+        # Filter for HTTP 200 responses using httpx
+        log "Filtering for HTTP 200 responses..."
+        cat "$HOME/scan_results/$domain_folder/all_subdomains.txt" | \
+          httpx -silent -status-code -mc 200 -o "$HOME/scan_results/$domain_folder/live_subdomains.txt"
+
+        # Count live subdomains
+        live_count=$(wc -l < "$HOME/scan_results/$domain_folder/live_subdomains.txt")
+        log "Found $live_count subdomains with HTTP 200 response"
+
+        # Send live domains to Telegram
+        send_to_telegram "$HOME/scan_results/$domain_folder/live_subdomains.txt" "Found $live_count live subdomains (HTTP 200) for $domain"
+
+        # Clean up httpx output to get only domains
+        cat "$HOME/scan_results/$domain_folder/live_subdomains.txt" | cut -d ' ' -f 1 > "$HOME/scan_results/$domain_folder/live_domains_clean.txt"
 
         # Consolidated FFUF results
         consolidated_ffuf="$HOME/scan_results/$domain_folder/all_ffuf_results.json"
         touch "$consolidated_ffuf"
 
-        # Run FFUF on discovered subdomains
-        log "Running FFUF on discovered subdomains..."
+        # Run FFUF only on domains with HTTP 200 response
+        log "Running FFUF on live subdomains..."
         while IFS= read -r subdomain; do
           log "Scanning $subdomain..."
           ffuf -u "https://$subdomain/FUZZ" \
@@ -130,11 +151,10 @@ jobs:
                -recursion \
                -recursion-depth 2 || handle_error "FFUF scan for $subdomain"
 
-          # Append to consolidated results if the scan produced results
           if [ -f "$HOME/scan_results/$domain_folder/ffuf_results_$subdomain.json" ]; then
             cat "$HOME/scan_results/$domain_folder/ffuf_results_$subdomain.json" >> "$consolidated_ffuf"
           fi
-        done < "$HOME/scan_results/$domain_folder/all_subdomains.txt"
+        done < "$HOME/scan_results/$domain_folder/live_domains_clean.txt"
 
         log "FFUF scan completed. Consolidated results in $consolidated_ffuf"
 
@@ -143,11 +163,12 @@ jobs:
         cd "$HOME"
         zip -r scan_results.zip scan_results/
 
-    - name: Send results to Telegram
+    - name: Send final results to Telegram
       env:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: |
         curl -F chat_id="$TELEGRAM_CHAT_ID" \
              -F document=@"$HOME/scan_results.zip" \
+             -F caption="Final scan results for ${{ github.event.inputs.domain }}" \
              "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendDocument"
