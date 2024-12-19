@@ -38,17 +38,18 @@ jobs:
         # Create results directory
         mkdir -p "$HOME/scan_results"
 
-        # Set hardcoded wordlist path
-        wordlist="wordlists/commmmon.txt"
+        # Verify wordlist exists
+        wordlist="${GITHUB_WORKSPACE}/wordlists/common.txt"
         if [[ ! -f "$wordlist" ]]; then
           echo "Error: Wordlist file not found at $wordlist"
+          ls -la ${GITHUB_WORKSPACE}/wordlists/
           exit 1
         fi
 
     - name: Subdomain enumeration and FFUF scan
       run: |
         domain="${{ github.event.inputs.domain }}"
-        wordlist="wordlists/common.txt"
+        wordlist="${GITHUB_WORKSPACE}/wordlists/common.txt"
 
         # Create directory for the domain
         domain_folder=$(echo "$domain" | tr '.' '_')
