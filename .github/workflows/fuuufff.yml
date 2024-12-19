@@ -1,4 +1,4 @@
-name: fuzzitt
+name: Subdomain Enumeration, Fuzzing, and Screenshot Capture
 
 on:
   workflow_dispatch:
@@ -41,17 +41,20 @@ jobs:
 
       - name: Run Subdomain Enumeration
         run: |
-          # Subfinder
+          # Ensure we're in the correct directory
+          mkdir -p "$GITHUB_WORKSPACE/$domain"
+
+          # Run Subfinder and save to a correct file path
           echo "[*] Running Subfinder..."
-          subfinder -d "$domain" -silent > "$domain/subfinder.txt"
+          subfinder -d "$domain" -silent > "$GITHUB_WORKSPACE/$domain/subfinder.txt"
 
           # crt.sh
           echo "[*] Fetching results from crt.sh..."
-          curl -s "https://crt.sh/?q=%25.$domain&output=json" | jq -r '.[].name_value' | sed 's/\*\.//g' > "$domain/crtsh.txt"
+          curl -s "https://crt.sh/?q=%25.$domain&output=json" | jq -r '.[].name_value' | sed 's/\*\.//g' > "$GITHUB_WORKSPACE/$domain/crtsh.txt"
 
           # RapidDNS with Pagination
           echo "[*] Fetching subdomains from RapidDNS..."
-          output_file="$domain/rapid.txt"
+          output_file="$GITHUB_WORKSPACE/$domain/rapid.txt"
           > "$output_file"
 
           response=$(curl -s "https://rapiddns.io/subdomain/$domain")
@@ -71,7 +74,7 @@ jobs:
 
       - name: Combine Subdomain Results and Remove Duplicates
         run: |
-          cat "$domain/subfinder.txt" "$domain/crtsh.txt" "$domain/rapid.txt" | sort -u > "$domain/subdomains.txt"
+          cat "$GITHUB_WORKSPACE/$domain/subfinder.txt" "$GITHUB_WORKSPACE/$domain/crtsh.txt" "$GITHUB_WORKSPACE/$domain/rapid.txt" | sort -u > "$GITHUB_WORKSPACE/$domain/subdomains.txt"
       
       - name: Send Subdomains to Telegram
         env:
@@ -80,47 +83,47 @@ jobs:
         run: |
           curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" \
             -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -F document=@"$domain/subdomains.txt"
+            -F document=@"$GITHUB_WORKSPACE/$domain/subdomains.txt"
 
       - name: Get 200 OK Domains using httpx
         run: |
-          mkdir -p "$domain/200_ok"
-          cat "$domain/subdomains.txt" | httpx -status-code -silent | grep -E "200" | cut -d " " -f1 > "$domain/200.txt"
+          mkdir -p "$GITHUB_WORKSPACE/$domain/200_ok"
+          cat "$GITHUB_WORKSPACE/$domain/subdomains.txt" | httpx -status-code -silent | grep -E "200" | cut -d " " -f1 > "$GITHUB_WORKSPACE/$domain/200.txt"
 
       - name: Get Other Status Code Domains using httpx
         run: |
-          mkdir -p "$domain/other_status_codes"
-          cat "$domain/subdomains.txt" | httpx -status-code -silent | grep -vE "200" | cut -d " " -f1 > "$domain/other_status_codes.txt"
+          mkdir -p "$GITHUB_WORKSPACE/$domain/other_status_codes"
+          cat "$GITHUB_WORKSPACE/$domain/subdomains.txt" | httpx -status-code -silent | grep -vE "200" | cut -d " " -f1 > "$GITHUB_WORKSPACE/$domain/other_status_codes.txt"
 
       - name: Fuzz with ffuf for 200 OK domains
         run: |
-          mkdir -p "$domain/fuzzing_200"
+          mkdir -p "$GITHUB_WORKSPACE/$domain/fuzzing_200"
           while read -r domain; do
             echo "[*] Fuzzing $domain..."
-            ffuf -u "http://$domain/FUZZ" -w https://github.com/jahanaj098/shhhhhh/blob/main/wordlists/common.txt -ac -mc 200 -max-response-size 10485760 -o "$domain/fuzzing_200/results_$domain.json"
+            ffuf -u "http://$domain/FUZZ" -w https://github.com/jahanaj098/shhhhhh/blob/main/wordlists/common.txt -ac -mc 200 -max-response-size 10485760 -o "$GITHUB_WORKSPACE/$domain/fuzzing_200/results_$domain.json"
             
             # Check if any valid response received and take a screenshot
-            if [ -f "$domain/fuzzing_200/results_$domain.json" ]; then
-              puppeteer --headless --screenshot --output="$domain/fuzzing_200/screenshot_$domain.png" "http://$domain/.htaccess"
-              curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" -F document=@"$domain/fuzzing_200/screenshot_$domain.png"
+            if [ -f "$GITHUB_WORKSPACE/$domain/fuzzing_200/results_$domain.json" ]; then
+              puppeteer --headless --screenshot --output="$GITHUB_WORKSPACE/$domain/fuzzing_200/screenshot_$domain.png" "http://$domain/.htaccess"
+              curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" -F document=@"$GITHUB_WORKSPACE/$domain/fuzzing_200/screenshot_$domain.png"
             fi
-          done < "$domain/200.txt"
+          done < "$GITHUB_WORKSPACE/$domain/200.txt"
 
       - name: Fuzz with ffuf for Other Status Code domains
         run: |
-          mkdir -p "$domain/fuzzing_other"
+          mkdir -p "$GITHUB_WORKSPACE/$domain/fuzzing_other"
           while read -r domain; do
             echo "[*] Fuzzing $domain..."
-            ffuf -u "http://$domain/FUZZ" -w https://github.com/jahanaj098/shhhhhh/blob/main/wordlists/common.txt -ac -mc 200 -max-response-size 10485760 -o "$domain/fuzzing_other/results_$domain.json"
+            ffuf -u "http://$domain/FUZZ" -w https://github.com/jahanaj098/shhhhhh/blob/main/wordlists/common.txt -ac -mc 200 -max-response-size 10485760 -o "$GITHUB_WORKSPACE/$domain/fuzzing_other/results_$domain.json"
             
             # Check if any valid response received and take a screenshot
-            if [ -f "$domain/fuzzing_other/results_$domain.json" ]; then
-              puppeteer --headless --screenshot --output="$domain/fuzzing_other/screenshot_$domain.png" "http://$domain/.htaccess"
-              curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" -F document=@"$domain/fuzzing_other/screenshot_$domain.png"
+            if [ -f "$GITHUB_WORKSPACE/$domain/fuzzing_other/results_$domain.json" ]; then
+              puppeteer --headless --screenshot --output="$GITHUB_WORKSPACE/$domain/fuzzing_other/screenshot_$domain.png" "http://$domain/.htaccess"
+              curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" -F document=@"$GITHUB_WORKSPACE/$domain/fuzzing_other/screenshot_$domain.png"
             fi
-          done < "$domain/other_status_codes.txt"
+          done < "$GITHUB_WORKSPACE/$domain/other_status_codes.txt"
 
       - name: Create Zip of All Files and Send to Telegram
         run: |
-          zip -r "$domain/final.zip" "$domain/fuzzing_200" "$domain/fuzzing_other"
-          curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" -F document=@"$domain/final.zip"
+          zip -r "$GITHUB_WORKSPACE/$domain/final.zip" "$GITHUB_WORKSPACE/$domain/fuzzing_200" "$GITHUB_WORKSPACE/$domain/fuzzing_other"
+          curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" -F document=@"$GITHUB_WORKSPACE/$domain/final.zip"
