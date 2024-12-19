@@ -1,13 +1,10 @@
-name:  FFUF Scan
+name: FFUF Scan
 
 on:
   workflow_dispatch:
     inputs:
       domain:
         description: "Domain to scan"
-        required: true
-      wordlist:
-        description: "Wordlist file path"
         required: true
 
 jobs:
@@ -28,14 +25,16 @@ jobs:
         if [[ -z "${{ github.event.inputs.domain }}" ]]; then
           echo "Domain cannot be empty" && exit 1
         fi
-        if [[ ! -f "${{ github.event.inputs.wordlist }}" ]]; then
-          echo "Wordlist file not found: ${{ github.event.inputs.wordlist }}" && exit 1
-        fi
 
     - name: Subdomain enumeration and FFUF scan
       run: |
         domain="${{ github.event.inputs.domain }}"
-        wordlist="${{ github.event.inputs.wordlist }}"
+        wordlist="wordlists/common.txt"
+
+        # Ensure the wordlist exists
+        if [[ ! -f "$wordlist" ]]; then
+          echo "Wordlist file not found: $wordlist" && exit 1
+        fi
 
         # Create directory for the domain
         domain_folder=$(echo "$domain" | tr '.' '_')
@@ -115,4 +114,4 @@ jobs:
       run: |
         curl -F chat_id="$TELEGRAM_CHAT_ID" \
              -F document=@"~/scan_results.zip" \
-             "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendDocument"
+             "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendDocument"
