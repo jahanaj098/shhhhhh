@@ -20,38 +20,28 @@ jobs:
         sudo apt update
         sudo apt install -y jq curl zip git
 
-        # Install Go (if not already available)
-        if ! command -v go >/dev/null 2>&1; then
-          echo "Installing Go..."
-          curl -s https://dl.google.com/go/go1.21.0.linux-amd64.tar.gz | sudo tar -C /usr/local -xzf -
-          echo "export PATH=$PATH:/usr/local/go/bin" >> ~/.bashrc
-          export PATH=$PATH:/usr/local/go/bin
-        fi
-
-        # Verify Go installation
-        if ! command -v go >/dev/null 2>&1; then
-          echo "Go installation failed" && exit 1
-        fi
+        # Install Go
+        curl -s https://dl.google.com/go/go1.21.0.linux-amd64.tar.gz | sudo tar -C /usr/local -xzf -
+        echo "export PATH=$PATH:/usr/local/go/bin:$(go env GOPATH)/bin" >> ~/.bashrc
+        echo "export GOPATH=$(go env GOPATH)" >> ~/.bashrc
+        source ~/.bashrc
+        
+        # Add Go binary path to GitHub Actions environment
+        echo "/usr/local/go/bin" >> $GITHUB_PATH
+        echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
         # Install FFUF
-        echo "Installing FFUF..."
         go install github.com/ffuf/ffuf/v2@latest
 
         # Install Subfinder
-        echo "Installing Subfinder..."
         go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
 
         # Verify installations
-        if ! command -v ffuf >/dev/null 2>&1; then
-          echo "FFUF installation failed" && exit 1
-        fi
-
-        if ! command -v subfinder >/dev/null 2>&1; then
-          echo "Subfinder installation failed" && exit 1
-        fi
+        which ffuf || echo "FFUF not found in PATH"
+        which subfinder || echo "Subfinder not found in PATH"
 
         # Create results directory
-        mkdir -p ~/scan_results
+        mkdir -p "$HOME/scan_results"
 
         # Set hardcoded wordlist path
         wordlist="wordlists/common.txt"
@@ -67,7 +57,7 @@ jobs:
 
         # Create directory for the domain
         domain_folder=$(echo "$domain" | tr '.' '_')
-        mkdir -p "~/scan_results/$domain_folder"
+        mkdir -p "$HOME/scan_results/$domain_folder"
 
         log() {
           echo "[*] $1"
@@ -75,14 +65,14 @@ jobs:
 
         # Subdomain enumeration
         log "Running Subfinder..."
-        subfinder -d "$domain" -silent > "~/scan_results/$domain_folder/subfinder.txt"
+        subfinder -d "$domain" -silent > "$HOME/scan_results/$domain_folder/subfinder.txt"
 
         log "Fetching results from crt.sh..."
         curl -s -m 10 "https://crt.sh/?q=%25.$domain&output=json" | \
-          jq -r '.[].name_value' | sed 's/\*\.//g' > "~/scan_results/$domain_folder/crtsh.txt"
+          jq -r '.[].name_value' | sed 's/\*\.//g' > "$HOME/scan_results/$domain_folder/crtsh.txt"
 
         log "Fetching subdomains from RapidDNS..."
-        output_file="~/scan_results/$domain_folder/rapid.txt"
+        output_file="$HOME/scan_results/$domain_folder/rapid.txt"
         > "$output_file"
 
         # Improved RapidDNS scraping
@@ -97,20 +87,20 @@ jobs:
 
         # Combine and deduplicate subdomains
         log "Consolidating subdomains..."
-        cat ~/scan_results/$domain_folder/*.txt | sort -u > ~/scan_results/$domain_folder/all_subdomains.txt
+        cat "$HOME/scan_results/$domain_folder"/*.txt | sort -u > "$HOME/scan_results/$domain_folder/all_subdomains.txt"
 
         # Verify if subdomains were found
-        if [ ! -s "~/scan_results/$domain_folder/all_subdomains.txt" ]; then
+        if [ ! -s "$HOME/scan_results/$domain_folder/all_subdomains.txt" ]; then
           log "No subdomains found for $domain"
           exit 1
         fi
 
         # Logging number of discovered subdomains
-        subdomain_count=$(wc -l < ~/scan_results/$domain_folder/all_subdomains.txt)
+        subdomain_count=$(wc -l < "$HOME/scan_results/$domain_folder/all_subdomains.txt")
         log "Discovered $subdomain_count unique subdomains"
 
         # Consolidated FFUF results
-        consolidated_ffuf="~/scan_results/$domain_folder/all_ffuf_results.json"
+        consolidated_ffuf="$HOME/scan_results/$domain_folder/all_ffuf_results.json"
         > "$consolidated_ffuf"
 
         # Run FFUF on discovered subdomains
@@ -119,22 +109,25 @@ jobs:
           log "Scanning $subdomain..."
           ffuf -u "https://$subdomain/FUZZ" \
                -w "$wordlist" \
-               -o "~/scan_results/$domain_folder/ffuf_results_$subdomain.json" \
+               -o "$HOME/scan_results/$domain_folder/ffuf_results_$subdomain.json" \
                -json \
                -timeout 3 \
                -rate 50 \
                -recursion \
                -recursion-depth 2
 
-          # Append to consolidated results
-          cat "~/scan_results/$domain_folder/ffuf_results_$subdomain.json" >> "$consolidated_ffuf"
-        done < ~/scan_results/$domain_folder/all_subdomains.txt
+          # Append to consolidated results if the scan produced results
+          if [ -f "$HOME/scan_results/$domain_folder/ffuf_results_$subdomain.json" ]; then
+            cat "$HOME/scan_results/$domain_folder/ffuf_results_$subdomain.json" >> "$consolidated_ffuf"
+          fi
+        done < "$HOME/scan_results/$domain_folder/all_subdomains.txt"
 
         log "FFUF scan completed. Consolidated results in $consolidated_ffuf"
 
     - name: Compress results
       run: |
-        zip -r ~/scan_results.zip ~/scan_results
+        cd "$HOME"
+        zip -r scan_results.zip scan_results/
 
     - name: Send results to Telegram
       env:
@@ -142,5 +135,5 @@ jobs:
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: |
         curl -F chat_id="$TELEGRAM_CHAT_ID" \
-             -F document=@"~/scan_results.zip" \
+             -F document=@"$HOME/scan_results.zip" \
              "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendDocument"
