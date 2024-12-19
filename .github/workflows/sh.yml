@@ -1,0 +1,35 @@
+name: Remote SSH Access with Tmate
+
+on:
+  workflow_dispatch:  # Allows manual triggering of the workflow
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up tmate session
+      uses: mxschmitt/action-tmate@v3
+      timeout-minutes: 30  # Session will timeout after 30 minutes if not connected
+      
+    - name: Send Telegram Message when session starts
+      if: success()
+      uses: appleboy/telegram-action@master
+      with:
+        to: ${{ secrets.TELEGRAM_CHAT_ID }}
+        token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        message: |
+          🔔 SSH Session is ready!
+          The workflow has started a new tmate session.
+          Please check the GitHub Actions log for connection details.
+          
+    - name: Send Telegram Message when session ends
+      if: always()
+      uses: appleboy/telegram-action@master
+      with:
+        to: ${{ secrets.TELEGRAM_CHAT_ID }}
+        token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        message: |
+          ⚠️ SSH Session has ended!
+          The tmate session has been terminated.
