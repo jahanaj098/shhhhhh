@@ -119,10 +119,12 @@ jobs:
         # Send all subdomains to Telegram
         send_to_telegram "$HOME/scan_results/$domain_folder/all_subdomains.txt" "Found $subdomain_count subdomains for $domain"
 
-        # Filter for HTTP 200 responses using httpx
+        # Filter for HTTP 200 responses using httpx and save clean domain names
         log "Filtering for HTTP 200 responses..."
         cat "$HOME/scan_results/$domain_folder/all_subdomains.txt" | \
-          httpx -silent -status-code -mc 200 -o "$HOME/scan_results/$domain_folder/live_subdomains.txt"
+          httpx -silent -status-code -mc 200 | \
+          cut -d ' ' -f1 | \
+          sed 's|https\?://||' > "$HOME/scan_results/$domain_folder/live_subdomains.txt"
 
         # Count live subdomains
         live_count=$(wc -l < "$HOME/scan_results/$domain_folder/live_subdomains.txt")
@@ -131,9 +133,6 @@ jobs:
         # Send live domains to Telegram
         send_to_telegram "$HOME/scan_results/$domain_folder/live_subdomains.txt" "Found $live_count live subdomains (HTTP 200) for $domain"
 
-        # Clean up httpx output to get only domains
-        cat "$HOME/scan_results/$domain_folder/live_subdomains.txt" | cut -d ' ' -f 1 > "$HOME/scan_results/$domain_folder/live_domains_clean.txt"
-
         # Consolidated FFUF results
         consolidated_ffuf="$HOME/scan_results/$domain_folder/all_ffuf_results.json"
         touch "$consolidated_ffuf"
@@ -141,20 +140,22 @@ jobs:
         # Run FFUF only on domains with HTTP 200 response
         log "Running FFUF on live subdomains..."
         while IFS= read -r subdomain; do
+          clean_subdomain=$(echo "$subdomain" | tr -cd '[:alnum:]._-')
           log "Scanning $subdomain..."
+          
           ffuf -u "https://$subdomain/FUZZ" \
                -w "$wordlist" \
-               -o "$HOME/scan_results/$domain_folder/ffuf_results_$subdomain.json" \
+               -o "$HOME/scan_results/$domain_folder/ffuf_results_${clean_subdomain}.json" \
                -json \
                -timeout 3 \
                -rate 50 \
                -recursion \
                -recursion-depth 2 || handle_error "FFUF scan for $subdomain"
 
-          if [ -f "$HOME/scan_results/$domain_folder/ffuf_results_$subdomain.json" ]; then
-            cat "$HOME/scan_results/$domain_folder/ffuf_results_$subdomain.json" >> "$consolidated_ffuf"
+          if [ -f "$HOME/scan_results/$domain_folder/ffuf_results_${clean_subdomain}.json" ]; then
+            cat "$HOME/scan_results/$domain_folder/ffuf_results_${clean_subdomain}.json" >> "$consolidated_ffuf"
           fi
-        done < "$HOME/scan_results/$domain_folder/live_domains_clean.txt"
+        done < "$HOME/scan_results/$domain_folder/live_subdomains.txt"
 
         log "FFUF scan completed. Consolidated results in $consolidated_ffuf"
 
