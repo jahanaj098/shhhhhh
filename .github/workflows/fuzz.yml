@@ -1,4 +1,4 @@
-name: Subdomain Enumeration and Fuzzing Workflow
+name: hacker
 
 on:
   workflow_dispatch:
