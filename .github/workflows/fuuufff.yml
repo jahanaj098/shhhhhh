@@ -1,121 +1,52 @@
-name: Subdomain Enumeration and Fuzzing Workflow
+name: Fuzzing Automation with ffuf and Screenshot
 
 on:
   workflow_dispatch:
     inputs:
       domain:
-        description: 'Enter the domain for enumeration (e.g., hackerone.com)'
+        description: "Enter the domain"
         required: true
-        type: string
+        default: "example.com"
 
 jobs:
-  subdomain-enumeration-and-fuzzing:
+  fuzzing_job:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
+    - name: Checkout Code
       uses: actions/checkout@v3
 
-    - name: Install necessary tools
+    - name: Create Domain Directory
       run: |
-        sudo apt-get update
-        sudo apt-get install -y jq curl zip git
+        mkdir -p "${{ github.event.inputs.domain }}"
 
-        # Install Go
-        curl -s https://dl.google.com/go/go1.21.0.linux-amd64.tar.gz | sudo tar -C /usr/local -xzf -
-        echo "export PATH=$PATH:/usr/local/go/bin:$(go env GOPATH)/bin" >> ~/.bashrc
-        echo "export GOPATH=$(go env GOPATH)" >> ~/.bashrc
-        source ~/.bashrc
-
-        # Add Go binary path to GitHub Actions environment
-        echo "/usr/local/go/bin" >> $GITHUB_PATH
-        echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
-
-        # Install required Go tools
-        go install github.com/ffuf/ffuf/v2@latest
-        go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
-        go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
-
-        # Install Puppeteer for screenshots
-        npm install puppeteer
-
-    - name: Create directory for domain results
+    - name: Extract Domains
       run: |
-        mkdir -p ${{ github.event.inputs.domain }}
-
-    - name: Subdomain enumeration with Subfinder
-      run: |
-        echo "[*] Running Subfinder..."
-        subfinder -d "${{ github.event.inputs.domain }}" -silent > "${{ github.event.inputs.domain }}/subfinder.txt"
-
-    - name: Subdomain enumeration with crt.sh
-      run: |
-        echo "[*] Fetching results from crt.sh..."
-        curl -s "https://crt.sh/?q=%25.${{ github.event.inputs.domain }}&output=json" | jq -r '.[].name_value' | sed 's/\*\.//g' > "${{ github.event.inputs.domain }}/crtsh.txt"
-
-    - name: Subdomain enumeration with RapidDNS (with pagination)
-      run: |
-        echo "[*] Fetching subdomains from RapidDNS..."
-        output_file="${{ github.event.inputs.domain }}/rapid.txt"
-        > "$output_file"
-        response=$(curl -s "https://rapiddns.io/subdomain/${{ github.event.inputs.domain }}")
-        total_subdomains=$(echo "$response" | grep -oP '(?<=<span style="color: #39cfca; ">)[0-9,]+(?=</span>)' | sed 's/,//g')
-        if [[ -n "$total_subdomains" ]]; then
-          total_pages=$(( (total_subdomains + 99) / 100 ))
-          for ((page=1; page<=total_pages; page++)); do
-            echo "Fetching page $page of $total_pages..."
-            curl -s "https://rapiddns.io/subdomain/${{ github.event.inputs.domain }}?page=$page" | \
-            grep -oP '(?<=<td>)[^<]+(?=</td>)' | \
-            grep -E '^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$' >> "$output_file"
-          done
-        else
-          echo "Could not determine total subdomains from RapidDNS."
-        fi
-
-    - name: Combine subdomains and remove duplicates
-      run: |
-        cat "${{ github.event.inputs.domain }}/subfinder.txt" "${{ github.event.inputs.domain }}/crtsh.txt" "${{ github.event.inputs.domain }}/rapid.txt" | sort -u > "${{ github.event.inputs.domain }}/subdomains.txt"
-
-    - name: Send subdomains.txt to Telegram bot
-      env:
-        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      run: |
-        curl -X POST "https://api.telegram.org/bot${{ env.TELEGRAM_TOKEN }}/sendDocument" -F chat_id="${{ env.TELEGRAM_CHAT_ID }}" -F document=@"${{ github.event.inputs.domain }}/subdomains.txt"
-
-    - name: Check status codes using httpx
-      run: |
-        echo "[*] Running httpx to check status codes..."
-        mkdir -p "${{ github.event.inputs.domain }}/httpx"
-        httpx -l "${{ github.event.inputs.domain }}/subdomains.txt" -silent -status-code -o "${{ github.event.inputs.domain }}/httpx_output.txt"
-        
-    - name: Sort domains by HTTP status code
-      run: |
-        grep "200" "${{ github.event.inputs.domain }}/httpx_output.txt" | awk '{print $1}' > "${{ github.event.inputs.domain }}/200.txt"
-        grep -v "200" "${{ github.event.inputs.domain }}/httpx_output.txt" | awk '{print $1}' > "${{ github.event.inputs.domain }}/other_status_codes.txt"
-
-    - name: Send status code files to Telegram bot
-      env:
-        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      run: |
-        curl -X POST "https://api.telegram.org/bot${{ env.TELEGRAM_TOKEN }}/sendDocument" -F chat_id="${{ env.TELEGRAM_CHAT_ID }}" -F document=@"${{ github.event.inputs.domain }}/200.txt"
-        curl -X POST "https://api.telegram.org/bot${{ env.TELEGRAM_TOKEN }}/sendDocument" -F chat_id="${{ env.TELEGRAM_CHAT_ID }}" -F document=@"${{ github.event.inputs.domain }}/other_status_codes.txt"
-
-    - name: Download wordlist for ffuf
-      run: |
-        curl -o common.txt https://github.com/jahanaj098/shhhhhh/blob/main/wordlists/common.txt
+        echo "[*] Extracting domains for ${{ github.event.inputs.domain }}..."
+        # Example: Replace with your domain extraction logic
+        echo ${{ github.event.inputs.domain }} > "${{ github.event.inputs.domain }}/200.txt"
+        echo "test.${{ github.event.inputs.domain }}" > "${{ github.event.inputs.domain }}/other_status_codes.txt"
 
     - name: Fuzz with ffuf for 200 OK domains
       run: |
         mkdir -p "${{ github.event.inputs.domain }}/fuzzing_200"
         while read -r domain; do
-          echo "[*] Fuzzing $domain..."
-          ffuf -u "https://$domain/FUZZ" -w common.txt -ac -mc 200 -o "${{ github.event.inputs.domain }}/fuzzing_200/results_$domain.json"
+          echo "[*] Testing protocol for $domain..."
+          if curl -s --head --connect-timeout 5 http://$domain | grep "200 OK" > /dev/null; then
+            protocol="http"
+          elif curl -s --head --connect-timeout 5 https://$domain | grep "200 OK" > /dev/null; then
+            protocol="https"
+          else
+            echo "[-] Unable to determine protocol for $domain. Skipping..."
+            continue
+          fi
+
+          echo "[*] Fuzzing $protocol://$domain..."
+          ffuf -u "$protocol://$domain/FUZZ" -w common.txt -ac -mc 200 -o "${{ github.event.inputs.domain }}/fuzzing_200/results_$domain.json"
           
           # Check if any valid response received and take a screenshot
           if [ -f "${{ github.event.inputs.domain }}/fuzzing_200/results_$domain.json" ]; then
-            puppeteer --headless --screenshot --output="${{ github.event.inputs.domain }}/fuzzing_200/screenshot_$domain.png" "http://$domain/.htaccess"
+            puppeteer --headless --screenshot --output="${{ github.event.inputs.domain }}/fuzzing_200/screenshot_$domain.png" "$protocol://$domain/.htaccess"
             curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" -F document=@"${{ github.event.inputs.domain }}/fuzzing_200/screenshot_$domain.png"
           fi
         done < "${{ github.event.inputs.domain }}/200.txt"
@@ -124,23 +55,22 @@ jobs:
       run: |
         mkdir -p "${{ github.event.inputs.domain }}/fuzzing_other"
         while read -r domain; do
-          echo "[*] Fuzzing $domain..."
-          ffuf -u "https://$domain/FUZZ" -w common.txt -ac -mc 400-599 -o "${{ github.event.inputs.domain }}/fuzzing_other/results_$domain.json"
+          echo "[*] Testing protocol for $domain..."
+          if curl -s --head --connect-timeout 5 http://$domain | grep "200 OK" > /dev/null; then
+            protocol="http"
+          elif curl -s --head --connect-timeout 5 https://$domain | grep "200 OK" > /dev/null; then
+            protocol="https"
+          else
+            echo "[-] Unable to determine protocol for $domain. Skipping..."
+            continue
+          fi
+
+          echo "[*] Fuzzing $protocol://$domain..."
+          ffuf -u "$protocol://$domain/FUZZ" -w common.txt -ac -mc 400-599 -o "${{ github.event.inputs.domain }}/fuzzing_other/results_$domain.json"
           
           # Check if any valid response received and take a screenshot
           if [ -f "${{ github.event.inputs.domain }}/fuzzing_other/results_$domain.json" ]; then
-            puppeteer --headless --screenshot --output="${{ github.event.inputs.domain }}/fuzzing_other/screenshot_$domain.png" "http://$domain/.htaccess"
+            puppeteer --headless --screenshot --output="${{ github.event.inputs.domain }}/fuzzing_other/screenshot_$domain.png" "$protocol://$domain/.htaccess"
             curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" -F document=@"${{ github.event.inputs.domain }}/fuzzing_other/screenshot_$domain.png"
           fi
         done < "${{ github.event.inputs.domain }}/other_status_codes.txt"
-
-    - name: Zip the results
-      run: |
-        zip -r "${{ github.event.inputs.domain }}/final.zip" "${{ github.event.inputs.domain }}"
-        
-    - name: Send final.zip to Telegram bot
-      env:
-        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      run: |
-       
