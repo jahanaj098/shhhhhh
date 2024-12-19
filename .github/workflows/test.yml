@@ -1,0 +1,101 @@
+name: Subdomain Enumeration and Filtering
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  subdomain-enum:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Install necessary tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y jq curl zip git
+
+        # Install Go
+        curl -s https://dl.google.com/go/go1.21.0.linux-amd64.tar.gz | sudo tar -C /usr/local -xzf -
+        echo "export PATH=$PATH:/usr/local/go/bin:$(go env GOPATH)/bin" >> ~/.bashrc
+        echo "export GOPATH=$(go env GOPATH)" >> ~/.bashrc
+        source ~/.bashrc
+
+        # Add Go binary path to GitHub Actions environment
+        echo "/usr/local/go/bin" >> $GITHUB_PATH
+        echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+        # Install required Go tools
+        go install github.com/ffuf/ffuf/v2@latest
+        go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+        go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
+
+    - name: Subdomain Enumeration - Subfinder
+      run: |
+        echo "Running Subfinder..."
+        subfinder -d "$DOMAIN" > "$DOMAIN/subfinder.txt"
+
+    - name: Subdomain Enumeration - crt.sh
+      run: |
+        echo "Fetching results from crt.sh..."
+        curl -s "https://crt.sh/?q=%25.$DOMAIN&output=json" | jq -r '.[].name_value' | sed 's/\*\.//g' > "$DOMAIN/crtsh.txt"
+
+    - name: Subdomain Enumeration - RapidDNS
+      run: |
+        echo "Fetching subdomains from RapidDNS..."
+        subdomains_per_page=100
+        output_file="$DOMAIN/rapid.txt"
+        > "$output_file"
+
+        # Fetch the total number of subdomains from the first page
+        response=$(curl -s "https://rapiddns.io/subdomain/$DOMAIN")
+        total_subdomains=$(echo "$response" | grep -oP '(?<=<span style="color: #39cfca; ">)[0-9,]+(?=</span>)' | sed 's/,//g')
+
+        if [[ -n "$total_subdomains" ]]; then
+            total_pages=$(( (total_subdomains + subdomains_per_page - 1) / subdomains_per_page ))
+
+            # Fetch all pages
+            for (( page=1; page<=total_pages; page++ )); do
+                echo "Fetching page $page of $total_pages from RapidDNS..."
+                curl -s "https://rapiddns.io/subdomain/$DOMAIN?page=$page" | \
+                grep -oP '(?<=<td>)[^<]+(?=</td>)' | \
+                grep -E '^[a-zA-Z0-9.-]+[.][a-zA-Z]{2,}$' | \
+                sed 's/^[ \t]*//;s/[ \t]*$//' >> "$output_file"
+            done
+        else
+            echo "Could not determine the total number of subdomains from RapidDNS."
+        fi
+
+    - name: Combine Subdomain Results and Remove Duplicates
+      run: |
+        cat "$DOMAIN"/*.txt | sort -u > "$DOMAIN/all_subdomains.txt"
+
+    - name: Status Code Filtering with httpx
+      run: |
+        echo "Running httpx for status code filtering..."
+        mkdir -p "$DOMAIN/filtered"
+        httpx -l "$DOMAIN/all_subdomains.txt" -status-code -silent -threads 100 > "$DOMAIN/httpx_output.txt"
+
+        # Sort based on status code 200 and other status codes
+        grep "200" "$DOMAIN/httpx_output.txt" > "$DOMAIN/filtered/200.txt"
+        grep -v "200" "$DOMAIN/httpx_output.txt" > "$DOMAIN/filtered/34x.txt"
+
+    - name: Directory Brute Force with ffuf
+      run: |
+        echo "Running directory brute force with ffuf..."
+        mkdir -p "$DOMAIN/ffuf_results"
+        ffuf -w /path/to/wordlist.txt -u "http://$DOMAIN/FUZZ" -t 50 -o "$DOMAIN/ffuf_results/dir_results.json"
+
+    - name: Send Results to Telegram
+      run: |
+        echo "Sending results to Telegram..."
+        curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
+             -d chat_id="$TELEGRAM_CHAT_ID" \
+             -d text="Subdomain enumeration completed. Results: 
+                     - Subdomains: $DOMAIN/all_subdomains.txt
+                     - Status Code 200: $DOMAIN/filtered/200.txt
+                     - Other Status Codes: $DOMAIN/filtered/34x.txt
+                     - Directory brute-forcing results: $DOMAIN/ffuf_results/dir_results.json"
