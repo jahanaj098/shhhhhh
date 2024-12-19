@@ -19,27 +19,42 @@ jobs:
       run: |
         sudo apt update
         sudo apt install -y jq curl zip
-        # Install ffuf
+        # Install FFUF
         sudo apt install -y ffuf || go install github.com/ffuf/ffuf/v2@latest
-        # Install Subfinder
-        curl -sL https://github.com/projectdiscovery/subfinder/releases/latest/download/subfinder-linux-amd64.tar.gz | tar -xz
-        sudo mv subfinder-linux-amd64 /usr/local/bin/subfinder
 
-    - name: Validate inputs
-      run: |
-        if [[ -z "${{ github.event.inputs.domain }}" ]]; then
-          echo "Domain cannot be empty" && exit 1
+        # Install Subfinder
+        echo "Downloading Subfinder binary..."
+        curl -sLo subfinder.tar.gz https://github.com/projectdiscovery/subfinder/releases/latest/download/subfinder-linux-amd64.tar.gz
+
+        if ! file subfinder.tar.gz | grep -q "gzip compressed data"; then
+          echo "Error: Downloaded file is not a valid gzip archive."
+          exit 1
+        fi
+
+        tar -xzf subfinder.tar.gz
+        if [ $? -ne 0 ]; then
+          echo "Error: Failed to extract Subfinder binary."
+          exit 1
+        fi
+
+        sudo mv subfinder-linux-amd64 /usr/local/bin/subfinder
+        rm -f subfinder.tar.gz
+        echo "Subfinder installed successfully."
+
+        # Create results directory
+        mkdir -p ~/scan_results
+
+        # Set hardcoded wordlist path
+        wordlist="wordlists/common.txt"
+        if [[ ! -f "$wordlist" ]]; then
+          echo "Error: Wordlist file not found at $wordlist"
+          exit 1
         fi
 
     - name: Subdomain enumeration and FFUF scan
       run: |
         domain="${{ github.event.inputs.domain }}"
         wordlist="wordlists/common.txt"
-
-        # Ensure the wordlist exists
-        if [[ ! -f "$wordlist" ]]; then
-          echo "Wordlist file not found: $wordlist" && exit 1
-        fi
 
         # Create directory for the domain
         domain_folder=$(echo "$domain" | tr '.' '_')
