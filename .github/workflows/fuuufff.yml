@@ -1,4 +1,4 @@
-name: Subdomain Enumeration and Fuzzing Workflow
+name: fuzzit
 
 on:
   workflow_dispatch:
