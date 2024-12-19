@@ -1,129 +1,132 @@
-name: Subdomain Enumeration, Fuzzing, and Screenshot Capture
+name: Subdomain Enumeration and Fuzzing Workflow
 
 on:
   workflow_dispatch:
     inputs:
       domain:
-        description: 'Domain to enumerate'
+        description: 'Enter the domain for enumeration (e.g., hackerone.com)'
         required: true
         type: string
 
 jobs:
-  subdomain-enum-and-fuzz:
+  subdomain-enumeration-and-fuzzing:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v2
+    - name: Checkout repository
+      uses: actions/checkout@v3
 
-      - name: Set up Go
-        run: |
-          sudo apt update
-          sudo apt install -y jq curl zip git
-          
-          # Install Go
-          curl -s https://dl.google.com/go/go1.21.0.linux-amd64.tar.gz | sudo tar -C /usr/local -xzf -
-          echo "export PATH=$PATH:/usr/local/go/bin:$(go env GOPATH)/bin" >> ~/.bashrc
-          echo "export GOPATH=$(go env GOPATH)" >> ~/.bashrc
-          source ~/.bashrc
-          
-          # Add Go binary path to GitHub Actions environment
-          echo "/usr/local/go/bin" >> $GITHUB_PATH
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+    - name: Install necessary tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y jq curl zip git
 
-          # Install required tools
-          go install github.com/ffuf/ffuf/v2@latest
-          go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
-          go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
-          
-      - name: Create Directory for Output
-        run: |
-          mkdir -p "${{ github.event.inputs.domain }}"
+        # Install Go
+        curl -s https://dl.google.com/go/go1.21.0.linux-amd64.tar.gz | sudo tar -C /usr/local -xzf -
+        echo "export PATH=$PATH:/usr/local/go/bin:$(go env GOPATH)/bin" >> ~/.bashrc
+        echo "export GOPATH=$(go env GOPATH)" >> ~/.bashrc
+        source ~/.bashrc
 
-      - name: Run Subdomain Enumeration
-        run: |
-          # Ensure we're in the correct directory
-          mkdir -p "$GITHUB_WORKSPACE/$domain"
+        # Add Go binary path to GitHub Actions environment
+        echo "/usr/local/go/bin" >> $GITHUB_PATH
+        echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
-          # Run Subfinder and save to a correct file path
-          echo "[*] Running Subfinder..."
-          subfinder -d "$domain" -silent > "$GITHUB_WORKSPACE/$domain/subfinder.txt"
+        # Install required Go tools
+        go install github.com/ffuf/ffuf/v2@latest
+        go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+        go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
 
-          # crt.sh
-          echo "[*] Fetching results from crt.sh..."
-          curl -s "https://crt.sh/?q=%25.$domain&output=json" | jq -r '.[].name_value' | sed 's/\*\.//g' > "$GITHUB_WORKSPACE/$domain/crtsh.txt"
+        # Install Puppeteer for screenshots
+        npm install puppeteer
 
-          # RapidDNS with Pagination
-          echo "[*] Fetching subdomains from RapidDNS..."
-          output_file="$GITHUB_WORKSPACE/$domain/rapid.txt"
-          > "$output_file"
+    - name: Create directory for domain results
+      run: |
+        mkdir -p ${{ github.event.inputs.domain }}
 
-          response=$(curl -s "https://rapiddns.io/subdomain/$domain")
-          total_subdomains=$(echo "$response" | grep -oP '(?<=<span style="color: #39cfca; ">)[0-9,]+(?=</span>)' | sed 's/,//g')
+    - name: Subdomain enumeration with Subfinder
+      run: |
+        echo "[*] Running Subfinder..."
+        subfinder -d "${{ github.event.inputs.domain }}" -silent > "${{ github.event.inputs.domain }}/subfinder.txt"
 
-          if [[ -n "$total_subdomains" ]]; then
-              total_pages=$(( (total_subdomains + 99) / 100 ))
-              for ((page=1; page<=total_pages; page++)); do
-                  echo "Fetching page $page of $total_pages..."
-                  curl -s "https://rapiddns.io/subdomain/$domain?page=$page" | \
-                  grep -oP '(?<=<td>)[^<]+(?=</td>)' | \
-                  grep -E '^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$' >> "$output_file"
-              done
-          else
-              echo "Could not determine total subdomains from RapidDNS."
-          fi
+    - name: Subdomain enumeration with crt.sh
+      run: |
+        echo "[*] Fetching results from crt.sh..."
+        curl -s "https://crt.sh/?q=%25.${{ github.event.inputs.domain }}&output=json" | jq -r '.[].name_value' | sed 's/\*\.//g' > "${{ github.event.inputs.domain }}/crtsh.txt"
 
-      - name: Combine Subdomain Results and Remove Duplicates
-        run: |
-          cat "$GITHUB_WORKSPACE/$domain/subfinder.txt" "$GITHUB_WORKSPACE/$domain/crtsh.txt" "$GITHUB_WORKSPACE/$domain/rapid.txt" | sort -u > "$GITHUB_WORKSPACE/$domain/subdomains.txt"
-      
-      - name: Send Subdomains to Telegram
-        env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" \
-            -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -F document=@"$GITHUB_WORKSPACE/$domain/subdomains.txt"
+    - name: Subdomain enumeration with RapidDNS (with pagination)
+      run: |
+        echo "[*] Fetching subdomains from RapidDNS..."
+        output_file="${{ github.event.inputs.domain }}/rapid.txt"
+        > "$output_file"
+        response=$(curl -s "https://rapiddns.io/subdomain/${{ github.event.inputs.domain }}")
+        total_subdomains=$(echo "$response" | grep -oP '(?<=<span style="color: #39cfca; ">)[0-9,]+(?=</span>)' | sed 's/,//g')
+        if [[ -n "$total_subdomains" ]]; then
+          total_pages=$(( (total_subdomains + 99) / 100 ))
+          for ((page=1; page<=total_pages; page++)); do
+            echo "Fetching page $page of $total_pages..."
+            curl -s "https://rapiddns.io/subdomain/${{ github.event.inputs.domain }}?page=$page" | \
+            grep -oP '(?<=<td>)[^<]+(?=</td>)' | \
+            grep -E '^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$' >> "$output_file"
+          done
+        else
+          echo "Could not determine total subdomains from RapidDNS."
+        fi
 
-      - name: Get 200 OK Domains using httpx
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/$domain/200_ok"
-          cat "$GITHUB_WORKSPACE/$domain/subdomains.txt" | httpx -status-code -silent | grep -E "200" | cut -d " " -f1 > "$GITHUB_WORKSPACE/$domain/200.txt"
+    - name: Combine subdomains and remove duplicates
+      run: |
+        cat "${{ github.event.inputs.domain }}/subfinder.txt" "${{ github.event.inputs.domain }}/crtsh.txt" "${{ github.event.inputs.domain }}/rapid.txt" | sort -u > "${{ github.event.inputs.domain }}/subdomains.txt"
 
-      - name: Get Other Status Code Domains using httpx
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/$domain/other_status_codes"
-          cat "$GITHUB_WORKSPACE/$domain/subdomains.txt" | httpx -status-code -silent | grep -vE "200" | cut -d " " -f1 > "$GITHUB_WORKSPACE/$domain/other_status_codes.txt"
+    - name: Send subdomains.txt to Telegram bot
+      env:
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        curl -X POST "https://api.telegram.org/bot${{ env.TELEGRAM_TOKEN }}/sendDocument" -F chat_id="${{ env.TELEGRAM_CHAT_ID }}" -F document=@"${{ github.event.inputs.domain }}/subdomains.txt"
 
-      - name: Fuzz with ffuf for 200 OK domains
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/$domain/fuzzing_200"
-          while read -r domain; do
-            echo "[*] Fuzzing $domain..."
-            ffuf -u "http://$domain/FUZZ" -w https://github.com/jahanaj098/shhhhhh/blob/main/wordlists/common.txt -ac -mc 200 -max-response-size 10485760 -o "$GITHUB_WORKSPACE/$domain/fuzzing_200/results_$domain.json"
-            
-            # Check if any valid response received and take a screenshot
-            if [ -f "$GITHUB_WORKSPACE/$domain/fuzzing_200/results_$domain.json" ]; then
-              puppeteer --headless --screenshot --output="$GITHUB_WORKSPACE/$domain/fuzzing_200/screenshot_$domain.png" "http://$domain/.htaccess"
-              curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" -F document=@"$GITHUB_WORKSPACE/$domain/fuzzing_200/screenshot_$domain.png"
-            fi
-          done < "$GITHUB_WORKSPACE/$domain/200.txt"
+    - name: Check status codes using httpx
+      run: |
+        echo "[*] Running httpx to check status codes..."
+        mkdir -p "${{ github.event.inputs.domain }}/httpx"
+        httpx -l "${{ github.event.inputs.domain }}/subdomains.txt" -silent -status-code -o "${{ github.event.inputs.domain }}/httpx_output.txt"
+        
+    - name: Sort domains by HTTP status code
+      run: |
+        grep "200" "${{ github.event.inputs.domain }}/httpx_output.txt" | awk '{print $1}' > "${{ github.event.inputs.domain }}/200.txt"
+        grep -v "200" "${{ github.event.inputs.domain }}/httpx_output.txt" | awk '{print $1}' > "${{ github.event.inputs.domain }}/other_status_codes.txt"
 
-      - name: Fuzz with ffuf for Other Status Code domains
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/$domain/fuzzing_other"
-          while read -r domain; do
-            echo "[*] Fuzzing $domain..."
-            ffuf -u "http://$domain/FUZZ" -w https://github.com/jahanaj098/shhhhhh/blob/main/wordlists/common.txt -ac -mc 200 -max-response-size 10485760 -o "$GITHUB_WORKSPACE/$domain/fuzzing_other/results_$domain.json"
-            
-            # Check if any valid response received and take a screenshot
-            if [ -f "$GITHUB_WORKSPACE/$domain/fuzzing_other/results_$domain.json" ]; then
-              puppeteer --headless --screenshot --output="$GITHUB_WORKSPACE/$domain/fuzzing_other/screenshot_$domain.png" "http://$domain/.htaccess"
-              curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" -F document=@"$GITHUB_WORKSPACE/$domain/fuzzing_other/screenshot_$domain.png"
-            fi
-          done < "$GITHUB_WORKSPACE/$domain/other_status_codes.txt"
+    - name: Send status code files to Telegram bot
+      env:
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        curl -X POST "https://api.telegram.org/bot${{ env.TELEGRAM_TOKEN }}/sendDocument" -F chat_id="${{ env.TELEGRAM_CHAT_ID }}" -F document=@"${{ github.event.inputs.domain }}/200.txt"
+        curl -X POST "https://api.telegram.org/bot${{ env.TELEGRAM_TOKEN }}/sendDocument" -F chat_id="${{ env.TELEGRAM_CHAT_ID }}" -F document=@"${{ github.event.inputs.domain }}/other_status_codes.txt"
 
-      - name: Create Zip of All Files and Send to Telegram
-        run: |
-          zip -r "$GITHUB_WORKSPACE/$domain/final.zip" "$GITHUB_WORKSPACE/$domain/fuzzing_200" "$GITHUB_WORKSPACE/$domain/fuzzing_other"
-          curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" -F document=@"$GITHUB_WORKSPACE/$domain/final.zip"
+    - name: Download wordlist for ffuf
+      run: |
+        curl -o common.txt https://raw.githubusercontent.com/jahanaj098/shhhhhh/refs/heads/main/wordlists/common.txt
+
+    - name: Fuzz with ffuf for 200 OK domains
+      run: |
+        mkdir -p "${{ github.event.inputs.domain }}/fuzzing_200"
+        ffuf -u "http://FUZZ.${{ github.event.inputs.domain }}" -w common.txt -ac -mc 200 -o "${{ github.event.inputs.domain }}/fuzzing_200/results.json"
+        # Screenshot capture for any found directories or files
+        puppeteer --headless --screenshot --output="${{ github.event.inputs.domain }}/fuzzing_200/screenshot.png" "http://FUZZ.${{ github.event.inputs.domain }}"
+
+    - name: Fuzz with ffuf for other status code domains
+      run: |
+        mkdir -p "${{ github.event.inputs.domain }}/fuzzing_other"
+        ffuf -u "http://FUZZ.${{ github.event.inputs.domain }}" -w common.txt -ac -mc 400-599 -o "${{ github.event.inputs.domain }}/fuzzing_other/results.json"
+        # Screenshot capture for any found directories or files
+        puppeteer --headless --screenshot --output="${{ github.event.inputs.domain }}/fuzzing_other/screenshot.png" "http://FUZZ.${{ github.event.inputs.domain }}"
+
+    - name: Zip the results
+      run: |
+        zip -r "${{ github.event.inputs.domain }}/final.zip" "${{ github.event.inputs.domain }}"
+        
+    - name: Send final.zip to Telegram bot
+      env:
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        curl -X POST "https://api.telegram.org/bot${{ env.TELEGRAM_TOKEN }}/sendDocument" -F chat_id="${{ env.TELEGRAM_CHAT_ID }}" -F document=@"${{ github.event.inputs.domain }}/final.zip"
