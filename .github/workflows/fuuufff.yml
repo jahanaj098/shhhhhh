@@ -1,4 +1,4 @@
-name: fuzzit
+name: Subdomain Enumeration and Fuzzing Workflow
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ on:
         type: string
 
 jobs:
-  subdomain-enumeration:
+  subdomain-enumeration-and-fuzzing:
     runs-on: ubuntu-latest
 
     steps:
@@ -83,10 +83,6 @@ jobs:
       run: |
         curl -X POST "https://api.telegram.org/bot${{ env.TELEGRAM_TOKEN }}/sendDocument" -F chat_id="${{ env.TELEGRAM_CHAT_ID }}" -F document=@"${{ github.event.inputs.domain }}/subdomains.txt"
 
-  http-status-check:
-    runs-on: ubuntu-latest
-    needs: subdomain-enumeration
-    steps:
     - name: Check status codes using httpx
       run: |
         echo "[*] Running httpx to check status codes..."
@@ -106,10 +102,6 @@ jobs:
         curl -X POST "https://api.telegram.org/bot${{ env.TELEGRAM_TOKEN }}/sendDocument" -F chat_id="${{ env.TELEGRAM_CHAT_ID }}" -F document=@"${{ github.event.inputs.domain }}/200.txt"
         curl -X POST "https://api.telegram.org/bot${{ env.TELEGRAM_TOKEN }}/sendDocument" -F chat_id="${{ env.TELEGRAM_CHAT_ID }}" -F document=@"${{ github.event.inputs.domain }}/other_status_codes.txt"
 
-  fuzzing:
-    runs-on: ubuntu-latest
-    needs: http-status-check
-    steps:
     - name: Download wordlist for ffuf
       run: |
         curl -o common.txt https://github.com/jahanaj098/shhhhhh/blob/main/wordlists/common.txt
@@ -128,10 +120,6 @@ jobs:
         # Screenshot capture for any found directories or files
         puppeteer --headless --screenshot --output="${{ github.event.inputs.domain }}/fuzzing_other/screenshot.png" "http://FUZZ.${{ github.event.inputs.domain }}"
 
-  zip-results:
-    runs-on: ubuntu-latest
-    needs: fuzzing
-    steps:
     - name: Zip the results
       run: |
         zip -r "${{ github.event.inputs.domain }}/final.zip" "${{ github.event.inputs.domain }}"
