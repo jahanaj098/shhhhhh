@@ -18,21 +18,36 @@ jobs:
     - name: Install Tools
       run: |
         sudo apt update
-        sudo apt install -y jq curl zip
+        sudo apt install -y jq curl zip git
 
-        # Install FFUF and Subfinder
-        go install -v github.com/ffuf/ffuf/v2@latest
+        # Install Go (if not already available)
+        if ! command -v go >/dev/null 2>&1; then
+          echo "Installing Go..."
+          curl -s https://dl.google.com/go/go1.21.0.linux-amd64.tar.gz | sudo tar -C /usr/local -xzf -
+          echo "export PATH=$PATH:/usr/local/go/bin" >> ~/.bashrc
+          export PATH=$PATH:/usr/local/go/bin
+        fi
+
+        # Verify Go installation
+        if ! command -v go >/dev/null 2>&1; then
+          echo "Go installation failed" && exit 1
+        fi
+
+        # Install FFUF
+        echo "Installing FFUF..."
+        go install github.com/ffuf/ffuf/v2@latest
+
+        # Install Subfinder
+        echo "Installing Subfinder..."
         go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
 
-        # Validate installations
+        # Verify installations
         if ! command -v ffuf >/dev/null 2>&1; then
-          echo "FFUF installation failed"
-          exit 1
+          echo "FFUF installation failed" && exit 1
         fi
 
         if ! command -v subfinder >/dev/null 2>&1; then
-          echo "Subfinder installation failed"
-          exit 1
+          echo "Subfinder installation failed" && exit 1
         fi
 
         # Create results directory
