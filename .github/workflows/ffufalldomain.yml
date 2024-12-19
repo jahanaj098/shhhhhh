@@ -15,31 +15,25 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v3
 
-    - name: Setup environment
+    - name: Install Tools
       run: |
         sudo apt update
         sudo apt install -y jq curl zip
-        # Install FFUF
-        sudo apt install -y ffuf || go install github.com/ffuf/ffuf/v2@latest
 
-        # Install Subfinder
-        echo "Downloading Subfinder binary..."
-        curl -sLo subfinder.tar.gz https://github.com/projectdiscovery/subfinder/releases/latest/download/subfinder-linux-amd64.tar.gz
+        # Install FFUF and Subfinder
+        go install -v github.com/ffuf/ffuf/v2@latest
+        go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
 
-        if ! file subfinder.tar.gz | grep -q "gzip compressed data"; then
-          echo "Error: Downloaded file is not a valid gzip archive."
+        # Validate installations
+        if ! command -v ffuf >/dev/null 2>&1; then
+          echo "FFUF installation failed"
           exit 1
         fi
 
-        tar -xzf subfinder.tar.gz
-        if [ $? -ne 0 ]; then
-          echo "Error: Failed to extract Subfinder binary."
+        if ! command -v subfinder >/dev/null 2>&1; then
+          echo "Subfinder installation failed"
           exit 1
         fi
-
-        sudo mv subfinder-linux-amd64 /usr/local/bin/subfinder
-        rm -f subfinder.tar.gz
-        echo "Subfinder installed successfully."
 
         # Create results directory
         mkdir -p ~/scan_results
