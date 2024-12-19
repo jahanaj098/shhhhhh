@@ -1,4 +1,4 @@
-name: Subdomain Enumeration and FFUF Scan
+name:  FFUF Scan
 
 on:
   workflow_dispatch:
