@@ -1,4 +1,4 @@
-name: Subdomain Enumeration and Fuzzing Workflow
+name: fuzzziiit
 
 on:
   workflow_dispatch:
@@ -104,21 +104,35 @@ jobs:
 
     - name: Download wordlist for ffuf
       run: |
-        curl -o common.txt https://raw.githubusercontent.com/jahanaj098/shhhhhh/refs/heads/main/wordlists/common.txt
+        curl -o common.txt https://github.com/jahanaj098/shhhhhh/blob/main/wordlists/common.txt
 
     - name: Fuzz with ffuf for 200 OK domains
       run: |
         mkdir -p "${{ github.event.inputs.domain }}/fuzzing_200"
-        ffuf -u "http://FUZZ.${{ github.event.inputs.domain }}" -w common.txt -ac -mc 200 -o "${{ github.event.inputs.domain }}/fuzzing_200/results.json"
-        # Screenshot capture for any found directories or files
-        puppeteer --headless --screenshot --output="${{ github.event.inputs.domain }}/fuzzing_200/screenshot.png" "http://FUZZ.${{ github.event.inputs.domain }}"
+        while read -r domain; do
+          echo "[*] Fuzzing $domain..."
+          ffuf -u "http://$domain/FUZZ" -w common.txt -ac -mc 200 -o "${{ github.event.inputs.domain }}/fuzzing_200/results_$domain.json"
+          
+          # Check if any valid response received and take a screenshot
+          if [ -f "${{ github.event.inputs.domain }}/fuzzing_200/results_$domain.json" ]; then
+            puppeteer --headless --screenshot --output="${{ github.event.inputs.domain }}/fuzzing_200/screenshot_$domain.png" "http://$domain/.htaccess"
+            curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" -F document=@"${{ github.event.inputs.domain }}/fuzzing_200/screenshot_$domain.png"
+          fi
+        done < "${{ github.event.inputs.domain }}/200.txt"
 
     - name: Fuzz with ffuf for other status code domains
       run: |
         mkdir -p "${{ github.event.inputs.domain }}/fuzzing_other"
-        ffuf -u "http://FUZZ.${{ github.event.inputs.domain }}" -w common.txt -ac -mc 400-599 -o "${{ github.event.inputs.domain }}/fuzzing_other/results.json"
-        # Screenshot capture for any found directories or files
-        puppeteer --headless --screenshot --output="${{ github.event.inputs.domain }}/fuzzing_other/screenshot.png" "http://FUZZ.${{ github.event.inputs.domain }}"
+        while read -r domain; do
+          echo "[*] Fuzzing $domain..."
+          ffuf -u "http://$domain/FUZZ" -w common.txt -ac -mc 400-599 -o "${{ github.event.inputs.domain }}/fuzzing_other/results_$domain.json"
+          
+          # Check if any valid response received and take a screenshot
+          if [ -f "${{ github.event.inputs.domain }}/fuzzing_other/results_$domain.json" ]; then
+            puppeteer --headless --screenshot --output="${{ github.event.inputs.domain }}/fuzzing_other/screenshot_$domain.png" "http://$domain/.htaccess"
+            curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" -F document=@"${{ github.event.inputs.domain }}/fuzzing_other/screenshot_$domain.png"
+          fi
+        done < "${{ github.event.inputs.domain }}/other_status_codes.txt"
 
     - name: Zip the results
       run: |
@@ -129,4 +143,4 @@ jobs:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: |
-        curl -X POST "https://api.telegram.org/bot${{ env.TELEGRAM_TOKEN }}/sendDocument" -F chat_id="${{ env.TELEGRAM_CHAT_ID }}" -F document=@"${{ github.event.inputs.domain }}/final.zip"
+       
