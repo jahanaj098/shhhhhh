@@ -111,7 +111,7 @@ jobs:
         mkdir -p "${{ github.event.inputs.domain }}/fuzzing_200"
         while read -r domain; do
           echo "[*] Fuzzing $domain..."
-          ffuf -u "http://$domain/FUZZ" -w common.txt -ac -mc 200 -o "${{ github.event.inputs.domain }}/fuzzing_200/results_$domain.json"
+          ffuf -u "https://$domain/FUZZ" -w common.txt -ac -mc 200 -o "${{ github.event.inputs.domain }}/fuzzing_200/results_$domain.json"
           
           # Check if any valid response received and take a screenshot
           if [ -f "${{ github.event.inputs.domain }}/fuzzing_200/results_$domain.json" ]; then
@@ -125,7 +125,7 @@ jobs:
         mkdir -p "${{ github.event.inputs.domain }}/fuzzing_other"
         while read -r domain; do
           echo "[*] Fuzzing $domain..."
-          ffuf -u "http://$domain/FUZZ" -w common.txt -ac -mc 400-599 -o "${{ github.event.inputs.domain }}/fuzzing_other/results_$domain.json"
+          ffuf -u "https://$domain/FUZZ" -w common.txt -ac -mc 400-599 -o "${{ github.event.inputs.domain }}/fuzzing_other/results_$domain.json"
           
           # Check if any valid response received and take a screenshot
           if [ -f "${{ github.event.inputs.domain }}/fuzzing_other/results_$domain.json" ]; then
