@@ -1,0 +1,55 @@
+name: FFUF Scan and Notify
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "URL to fuzz (use FUZZ in the URL for ffuf placeholders)"
+        required: true
+      wordlist:
+        description: "Wordlist to use for fuzzing"
+        required: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  run-ffuf:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout the repository (optional if your wordlist is in the repo)
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # Install ffuf
+      - name: Install FFUF
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffuf
+
+      # Run FFUF scan
+      - name: Run FFUF
+        run: |
+          ffuf -u "${{ github.event.inputs.url }}" -w "${{ github.event.inputs.wordlist }}" -o ffuf_results.json -of json
+
+      # Notify via Telegram
+      - name: Notify via Telegram
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -f ffuf_results.json ]; then
+            curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendMessage" \
+              -d chat_id="$TELEGRAM_CHAT_ID" \
+              -d text="FFUF scan completed. Results are attached." \
+              -d parse_mode="Markdown"
+            curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendDocument" \
+              -F chat_id="$TELEGRAM_CHAT_ID" \
+              -F document=@ffuf_results.json
+          else
+            curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendMessage" \
+              -d chat_id="$TELEGRAM_CHAT_ID" \
+              -d text="FFUF scan completed but no results were generated."
+          fi
