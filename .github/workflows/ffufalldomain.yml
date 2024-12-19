@@ -46,6 +46,15 @@ jobs:
           exit 1
         fi
 
+    - name: Debug - Verify file path and contents
+      run: |
+        # Verify that the repository files are checked out
+        ls -la $GITHUB_WORKSPACE
+
+        # Verify that the wordlist file exists and is accessible
+        ls -la $GITHUB_WORKSPACE/wordlists
+        cat $GITHUB_WORKSPACE/wordlists/common.txt
+
     - name: Subdomain enumeration and FFUF scan
       run: |
         domain="${{ github.event.inputs.domain }}"
