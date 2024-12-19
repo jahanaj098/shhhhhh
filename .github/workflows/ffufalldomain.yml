@@ -17,8 +17,13 @@ jobs:
 
     - name: Setup environment
       run: |
-        sudo apt update && sudo apt install -y jq curl ffuf subfinder zip
-        mkdir -p ~/scan_results
+        sudo apt update
+        sudo apt install -y jq curl zip
+        # Install ffuf
+        sudo apt install -y ffuf || go install github.com/ffuf/ffuf/v2@latest
+        # Install Subfinder
+        curl -sL https://github.com/projectdiscovery/subfinder/releases/latest/download/subfinder-linux-amd64.tar.gz | tar -xz
+        sudo mv subfinder-linux-amd64 /usr/local/bin/subfinder
 
     - name: Validate inputs
       run: |
