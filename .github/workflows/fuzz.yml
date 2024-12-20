@@ -34,31 +34,31 @@ jobs:
       - name: Run Subdomain Enumeration
         run: |
           domain="${{ github.event.inputs.domain }}"
-          
+
           # Create directory for storing results
           mkdir -p $domain
-          
+
           # Run Subfinder
           echo "Running Subfinder..."
           subfinder -d "$domain" > "$domain/subfinder.txt"
-          
+
           # Fetch results from crt.sh
           echo "Fetching results from crt.sh..."
           curl -s "https://crt.sh/?q=%25.$domain&output=json" | jq -r '.[].name_value' | sed 's/\*\.//g' > "$domain/crtsh.txt"
-          
+
           # RapidDNS enumeration with pagination
           echo "Fetching subdomains from RapidDNS..."
           subdomains_per_page=100
           output_file="$domain/rapid.txt"
           > "$output_file"
-          
+
           # Fetch the total number of subdomains from the first page
           response=$(curl -s "https://rapiddns.io/subdomain/$domain")
           total_subdomains=$(echo "$response" | grep -oP '(?<=<span style="color: #39cfca; ">)[0-9,]+(?=</span>)' | sed 's/,//g')
-          
+
           if [[ -n "$total_subdomains" ]]; then
               total_pages=$(( (total_subdomains + subdomains_per_page - 1) / subdomains_per_page ))
-              
+
               # Fetch all pages
               for (( page=1; page<=total_pages; page++ )); do
                   echo "Fetching page $page of $total_pages from RapidDNS..."
@@ -86,11 +86,21 @@ jobs:
 
           # Check if subdomains.txt exists and has content
           if [ -f "$subdomains_file" ] && [ -s "$subdomains_file" ]; then
-            # Send subdomains as a message to the Telegram bot
-            message="Subdomains found for $domain:\n$(cat "$subdomains_file")"
-            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-              -d "chat_id=${TELEGRAM_CHAT_ID}" \
-              -d "text=${message}"
+              # Read subdomains into a variable
+              subdomains=$(cat "$subdomains_file")
+
+              # Split the subdomains into chunks of 4096 characters or fewer
+              chunk_size=4096
+              message=""
+              for i in $(seq 0 $((${#subdomains} / $chunk_size))); do
+                chunk="${subdomains:$((i * chunk_size)):chunk_size}"
+                message="Subdomains found for $domain:\n$chunk"
+
+                # Send the message in chunks
+                curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+                  -d "chat_id=${TELEGRAM_CHAT_ID}" \
+                  -d "text=${message}"
+              done
           else
             echo "No subdomains found or file does not exist."
           fi
@@ -98,7 +108,7 @@ jobs:
       - name: Check HTTP Status Codes using httpx
         run: |
           domain="${{ github.event.inputs.domain }}"
-          
+
           # Run httpx to check the status code of each subdomain
           mkdir -p "$domain/httpx"
           cat "$domain/subdomains.txt" | httpx -status-code -o "$domain/httpx/urls_with_status.txt"
@@ -106,7 +116,7 @@ jobs:
       - name: Split URLs by Status Code
         run: |
           domain="${{ github.event.inputs.domain }}"
-          
+
           # Split URLs based on status codes
           mkdir -p "$domain/split"
           grep '200' "$domain/httpx/urls_with_status.txt" > "$domain/split/200.txt"
@@ -121,11 +131,11 @@ jobs:
       - name: Run Directory Bruteforce on 200.txt using ffuf
         run: |
           domain="${{ github.event.inputs.domain }}"
-          
+
           # Run ffuf for each subdomain from 200.txt
           mkdir -p "$domain/ffuf"
           touch "$domain/all_discovered_urls.txt"
-          
+
           while read subdomain; do
             echo "Running ffuf for $subdomain"
             output_file="$domain/ffuf/${subdomain}_200_ffuf_results.json"
@@ -135,7 +145,7 @@ jobs:
                  -ac \
                  -o "$output_file" \
                  -of json
-            
+
             # Extract URLs directly after each ffuf run
             if [ -f "$output_file" ]; then
               jq -r '.results[].url' "$output_file" >> "$domain/all_discovered_urls.txt"
@@ -145,10 +155,10 @@ jobs:
       - name: Run Directory Bruteforce on 34X.txt using ffuf
         run: |
           domain="${{ github.event.inputs.domain }}"
-          
+
           # Run ffuf for each subdomain from 34X.txt
           mkdir -p "$domain/ffuf"
-          
+
           while read subdomain; do
             echo "Running ffuf for $subdomain"
             output_file="$domain/ffuf/${subdomain}_34X_ffuf_results.json"
@@ -158,7 +168,7 @@ jobs:
                  -ac \
                  -o "$output_file" \
                  -of json
-            
+
             # Extract URLs directly after each ffuf run
             if [ -f "$output_file" ]; then
               jq -r '.results[].url' "$output_file" >> "$domain/all_discovered_urls.txt"
@@ -168,7 +178,7 @@ jobs:
       - name: Display Results Summary
         run: |
           domain="${{ github.event.inputs.domain }}"
-          
+
           echo "=== Results Summary ==="
           echo "Total subdomains found: $(wc -l < "$domain/subdomains.txt")"
           echo "Subdomains with 200 status: $(wc -l < "$domain/split/200.txt")"
