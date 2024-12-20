@@ -12,7 +12,6 @@ jobs:
   subdomain_enumeration:
     runs-on: ubuntu-latest
     steps:
-      # Previous steps remain the same until the Telegram step
       - name: Checkout repository
         uses: actions/checkout@v3
 
@@ -72,6 +71,11 @@ jobs:
               echo "Could not determine the total number of subdomains from RapidDNS."
           fi
 
+      - name: Combine All Subdomains into One File
+        run: |
+          domain="${{ github.event.inputs.domain }}"
+          cat "$domain/subfinder.txt" "$domain/crtsh.txt" "$domain/rapid.txt" | sort -u > "$domain/subdomains.txt"
+
       - name: Send subdomain to Telegram bot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -90,11 +94,6 @@ jobs:
           else
             echo "No subdomains found or file does not exist."
           fi
-
-      - name: Combine All Subdomains into One File
-        run: |
-          domain="${{ github.event.inputs.domain }}"
-          cat "$domain/subfinder.txt" "$domain/crtsh.txt" "$domain/rapid.txt" | sort -u > "$domain/subdomains.txt"
 
       - name: Check HTTP Status Codes using httpx
         run: |
