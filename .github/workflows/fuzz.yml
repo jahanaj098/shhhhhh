@@ -29,7 +29,7 @@ jobs:
 
           go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
 
-          go install -v github.com/tomnomnom/ffuf@latest
+          go install -v github.com/ffuf/ffuf/v2@latest
       - name: Run Subdomain Enumeration
         run: >
           domain="${{ github.event.inputs.domain }}"
