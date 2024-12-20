@@ -165,3 +165,28 @@ jobs:
               echo "Running ffuf on $url..."
               ffuf -w "$wordlist" -u "$url/FUZZ" -ac -o "$domain/${sanitized_url}_34X_ffuf_results.txt"
           done < "$urls_file"
+      - name: Aggregate All ffuf Results and Send to Telegram Bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          domain="${{ github.event.inputs.domain }}"
+          
+          # Create a combined results file
+          combined_results="$domain/combined_ffuf_results.txt"
+          > "$combined_results"
+
+          # Append all ffuf result files into the combined file
+          for result_file in "$domain"/*_200_ffuf_results.txt; do
+              cat "$result_file" >> "$combined_results"
+          done
+
+          # Send the combined results to Telegram as a .txt file
+          if [ -f "$combined_results" ] && [ -s "$combined_results" ]; then
+              curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+                  -F "chat_id=${TELEGRAM_CHAT_ID}" \
+                  -F "document=@${combined_results}" \
+                  -F "caption=Aggregated ffuf results for $domain"
+          else
+              echo "No ffuf results found to send."
+          fi
