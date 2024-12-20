@@ -129,7 +129,7 @@ jobs:
           while read subdomain; do
             echo "Running ffuf for $subdomain"
             output_file="$domain/ffuf/${subdomain}_200_ffuf_results.json"
-            ffuf -u "http://$subdomain/FUZZ" \
+            ffuf -u "$subdomain/FUZZ" \
                  -w "$domain/wordlist.txt" \
                  -t 10 \
                  -ac \
@@ -152,7 +152,7 @@ jobs:
           while read subdomain; do
             echo "Running ffuf for $subdomain"
             output_file="$domain/ffuf/${subdomain}_34X_ffuf_results.json"
-            ffuf -u "http://$subdomain/FUZZ" \
+            ffuf -u "$subdomain/FUZZ" \
                  -w "$domain/wordlist.txt" \
                  -t 10 \
                  -ac \
