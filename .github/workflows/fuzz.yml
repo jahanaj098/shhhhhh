@@ -101,7 +101,7 @@ jobs:
       - name: Split URLs by Status Code
         run: |
           domain="${{ github.event.inputs.domain }}"
-          grep '200' "$domain/urls_with_status.txt" | sed 's/ \+\[200\]//g' > "$domain/200.txt
+          grep '200' "$domain/urls_with_status.txt" | sed 's/ \+\[200\]//g' > "$domain/200.txt"
           grep -E '[0-9]{3}' "$domain/urls_with_status.txt" | sed 's/ \[[0-9]*\]$//' | sed 's/ \[.*\]//' > "$domain/34X.txt"
 
 
