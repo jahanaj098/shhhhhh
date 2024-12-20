@@ -104,6 +104,28 @@ jobs:
           
           grep '200' "$domain/urls_with_status.txt" | sed 's/\x1b\[[0-9;]*m//g' | sed 's/ \[200\]//g' > "$domain/200.txt"
           grep -E '[0-9]{3}' "$domain/urls_with_status.txt" | sed 's/ \[[0-9]*\]$//' | sed 's/ \[.*\]//' > "$domain/34X.txt"
+      - name: Send HTTP Status Files to Telegram Bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          domain="${{ github.event.inputs.domain }}"
+          httpx_200="$domain/200.txt"
+          httpx_34X="$domain/34X.txt"
+
+          if [ -f "$httpx_200" ] && [ -s "$httpx_200" ]; then
+              curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+                  -F "chat_id=${TELEGRAM_CHAT_ID}" \
+                  -F "document=@${httpx_200}" \
+                  -F "caption=HTTP 200 URLs for $domain"
+          fi
+
+          if [ -f "$httpx_34X" ] && [ -s "$httpx_34X" ]; then
+              curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+                  -F "chat_id=${TELEGRAM_CHAT_ID}" \
+                  -F "document=@${httpx_34X}" \
+                  -F "caption=HTTP 3XX/4XX/5XX URLs for $domain"
+          fi
 
       - name: Directory Fuzzing for 200.txt
         run: |
