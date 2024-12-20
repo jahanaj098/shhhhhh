@@ -103,62 +103,8 @@ jobs:
           domain="${{ github.event.inputs.domain }}"
           
           grep '200' "$domain/urls_with_status.txt" | sed 's/\x1b\[[0-9;]*m//g' | sed 's/ \[200\]//g' > "$domain/200.txt"
+
           grep -E '[0-9]{3}' "$domain/urls_with_status.txt" | sed 's/ \[[0-9]*\]$//' | sed 's/ \[.*\]//' > "$domain/34X.txt"
-      - name: Send HTTP Status Files to Telegram Bot
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          domain="${{ github.event.inputs.domain }}"
-          httpx_200="$domain/200.txt"
-          httpx_34X="$domain/34X.txt"
-
-          if [ -f "$httpx_200" ] && [ -s "$httpx_200" ]; then
-              curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
-                  -F "chat_id=${TELEGRAM_CHAT_ID}" \
-                  -F "document=@${httpx_200}" \
-                  -F "caption=HTTP 200 URLs for $domain"
-          fi
-
-          if [ -f "$httpx_34X" ] && [ -s "$httpx_34X" ]; then
-              curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
-                  -F "chat_id=${TELEGRAM_CHAT_ID}" \
-                  -F "document=@${httpx_34X}" \
-                  -F "caption=HTTP 3XX/4XX/5XX URLs for $domain"
-          fi
-
-      - name: Directory Fuzzing for 200.txt
-        run: |
-          domain="${{ github.event.inputs.domain }}"
-          wordlist_url="https://raw.githubusercontent.com/jahanaj098/shhhhhh/refs/heads/main/wordlists/common.txt"
-          wget -O "$domain/wordlist.txt" "$wordlist_url"
-
-          echo "Fuzzing with 200.txt"
-          if [ -f "$domain/200.txt" ]; then
-            while IFS= read -r url; do
-              if [[ -n "$url" ]]; then
-                echo "Running ffuf on $url"
-                ffuf -w "$domain/wordlist.txt" -u "$url/FUZZ" -ac -o "$domain/${url}_200_ffuf_results.txt"
-              fi
-            done < "$domain/200.txt"
-          else
-            echo "200.txt file not found."
-          fi
-
-      - name: Directory Fuzzing for 34X.txt
-        run: |
-          domain="${{ github.event.inputs.domain }}"
-          echo "Fuzzing with 34X.txt"
-          if [ -f "$domain/34X.txt" ]; then
-            while IFS= read -r url; do
-              if [[ -n "$url" ]]; then
-                echo "Running ffuf on $url"
-                ffuf -w "$domain/wordlist.txt" -u "$url/FUZZ" -ac -o "$domain/${url}_34X_ffuf_results.txt"
-              fi
-            done < "$domain/34X.txt"
-          else
-            echo "34X.txt file not found."
-          fi
 
       - name: Send HTTP Status Files to Telegram Bot
         env:
@@ -182,3 +128,40 @@ jobs:
                   -F "document=@${httpx_34X}" \
                   -F "caption=HTTP 3XX/4XX/5XX URLs for $domain"
           fi
+
+      - name: Download Wordlist
+        run: |
+          domain="${{ github.event.inputs.domain }}"
+          wget -O "$domain/wordlist.txt" https://raw.githubusercontent.com/jahanaj098/shhhhhh/refs/heads/main/wordlists/common.txt
+
+      - name: Perform Directory Fuzzing with ffuf
+        run: |
+          domain="${{ github.event.inputs.domain }}"
+          wordlist="$domain/wordlist.txt"
+          urls_file="$domain/200.txt"
+          
+          # Loop over each URL in the 200.txt file
+          while IFS= read -r url; do
+              # Sanitize the URL to create a valid file name
+              sanitized_url=$(echo "$url" | sed 's/^https\?:\/\///' | sed 's/\//_/g')
+              
+              # Run ffuf with the sanitized URL
+              echo "Running ffuf on $url..."
+              ffuf -w "$wordlist" -u "$url/FUZZ" -ac -o "$domain/${sanitized_url}_200_ffuf_results.txt"
+          done < "$urls_file"
+
+      - name: Perform Directory Fuzzing on 34X URLs
+        run: |
+          domain="${{ github.event.inputs.domain }}"
+          wordlist="$domain/wordlist.txt"
+          urls_file="$domain/34X.txt"
+          
+          # Loop over each URL in the 34X.txt file
+          while IFS= read -r url; do
+              # Sanitize the URL to create a valid file name
+              sanitized_url=$(echo "$url" | sed 's/^https\?:\/\///' | sed 's/\//_/g')
+              
+              # Run ffuf with the sanitized URL
+              echo "Running ffuf on $url..."
+              ffuf -w "$wordlist" -u "$url/FUZZ" -ac -o "$domain/${sanitized_url}_34X_ffuf_results.txt"
+          done < "$urls_file"
