@@ -103,10 +103,40 @@ jobs:
           domain="${{ github.event.inputs.domain }}"
           
           grep '200' "$domain/urls_with_status.txt" | sed 's/\x1b\[[0-9;]*m//g' | sed 's/ \[200\]//g' > "$domain/200.txt"
-
           grep -E '[0-9]{3}' "$domain/urls_with_status.txt" | sed 's/ \[[0-9]*\]$//' | sed 's/ \[.*\]//' > "$domain/34X.txt"
 
+      - name: Directory Fuzzing for 200.txt
+        run: |
+          domain="${{ github.event.inputs.domain }}"
+          wordlist_url="https://raw.githubusercontent.com/jahanaj098/shhhhhh/refs/heads/main/wordlists/common.txt"
+          wget -O "$domain/wordlist.txt" "$wordlist_url"
 
+          echo "Fuzzing with 200.txt"
+          if [ -f "$domain/200.txt" ]; then
+            while IFS= read -r url; do
+              if [[ -n "$url" ]]; then
+                echo "Running ffuf on $url"
+                ffuf -w "$domain/wordlist.txt" -u "$url/FUZZ" -ac -o "$domain/${url}_200_ffuf_results.txt"
+              fi
+            done < "$domain/200.txt"
+          else
+            echo "200.txt file not found."
+          fi
+
+      - name: Directory Fuzzing for 34X.txt
+        run: |
+          domain="${{ github.event.inputs.domain }}"
+          echo "Fuzzing with 34X.txt"
+          if [ -f "$domain/34X.txt" ]; then
+            while IFS= read -r url; do
+              if [[ -n "$url" ]]; then
+                echo "Running ffuf on $url"
+                ffuf -w "$domain/wordlist.txt" -u "$url/FUZZ" -ac -o "$domain/${url}_34X_ffuf_results.txt"
+              fi
+            done < "$domain/34X.txt"
+          else
+            echo "34X.txt file not found."
+          fi
 
       - name: Send HTTP Status Files to Telegram Bot
         env:
@@ -130,8 +160,3 @@ jobs:
                   -F "document=@${httpx_34X}" \
                   -F "caption=HTTP 3XX/4XX/5XX URLs for $domain"
           fi
-
-      - name: Download Wordlist
-        run: |
-          domain="${{ github.event.inputs.domain }}"
-          wget -O "$domain/wordlist.txt" https://raw.githubusercontent.com/jahanaj098/shhhhhh/refs/heads/main/wordlists/common.txt
