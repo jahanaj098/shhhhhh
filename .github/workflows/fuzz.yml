@@ -1,5 +1,5 @@
----
 name: fuzzit
+
 on:
   workflow_dispatch:
     inputs:
@@ -7,69 +7,56 @@ on:
         description: Enter the domain for enumeration (e.g., hackerone.com)
         required: true
         type: string
+
 jobs:
   subdomain_enumeration:
     runs-on: ubuntu-latest
     steps:
+      # Previous steps remain the same until the final extraction step
       - name: Checkout repository
         uses: actions/checkout@v3
+
       - name: Setup Go
         uses: actions/setup-go@v4
         with:
           go-version: "1.21"
+
       - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y jq curl
+
       - name: Install Tools
-        run: >
+        run: |
           go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
-
           go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
-
           go install -v github.com/ffuf/ffuf@latest
+
       - name: Run Subdomain Enumeration
-        run: >
+        run: |
           domain="${{ github.event.inputs.domain }}"
-
-
+          
           # Create directory for storing results
-
           mkdir -p $domain
-
-
+          
           # Run Subfinder
-
           echo "Running Subfinder..."
-
           subfinder -d "$domain" > "$domain/subfinder.txt"
-
-
+          
           # Fetch results from crt.sh
-
           echo "Fetching results from crt.sh..."
-
           curl -s "https://crt.sh/?q=%25.$domain&output=json" | jq -r '.[].name_value' | sed 's/\*\.//g' > "$domain/crtsh.txt"
-
-
+          
           # RapidDNS enumeration with pagination
-
           echo "Fetching subdomains from RapidDNS..."
-
           subdomains_per_page=100
-
           output_file="$domain/rapid.txt"
-
           > "$output_file"
-
-
+          
           # Fetch the total number of subdomains from the first page
-
           response=$(curl -s "https://rapiddns.io/subdomain/$domain")
-
           total_subdomains=$(echo "$response" | grep -oP '(?<=<span style="color: #39cfca; ">)[0-9,]+(?=</span>)' | sed 's/,//g')
-
-
+          
           if [[ -n "$total_subdomains" ]]; then
               total_pages=$(( (total_subdomains + subdomains_per_page - 1) / subdomains_per_page ))
               
@@ -84,82 +71,88 @@ jobs:
           else
               echo "Could not determine the total number of subdomains from RapidDNS."
           fi
+
       - name: Combine All Subdomains into One File
-        run: >
+        run: |
           domain="${{ github.event.inputs.domain }}"
+          cat "$domain/subfinder.txt" "$domain/crtsh.txt" "$domain/rapid.txt" | sort -u > "$domain/subdomains.txt"
 
-          cat "$domain/subfinder.txt" "$domain/crtsh.txt" "$domain/rapid.txt" > "$domain/subdomains.txt"
       - name: Check HTTP Status Codes using httpx
-        run: >
+        run: |
           domain="${{ github.event.inputs.domain }}"
-
-
+          
           # Run httpx to check the status code of each subdomain
-
           mkdir -p "$domain/httpx"
-
           cat "$domain/subdomains.txt" | httpx -status-code -o "$domain/httpx/urls_with_status.txt"
+
       - name: Split URLs by Status Code
-        run: >
+        run: |
           domain="${{ github.event.inputs.domain }}"
-
-
+          
           # Split URLs based on status codes
-
           mkdir -p "$domain/split"
-
           grep '200' "$domain/httpx/urls_with_status.txt" > "$domain/split/200.txt"
-
           grep -E '3[0-9]{2}|4[0-9]{2}|5[0-9]{2}' "$domain/httpx/urls_with_status.txt" > "$domain/split/34X.txt"
+
       - name: Download Wordlist
-        run: >
+        run: |
           domain="${{ github.event.inputs.domain }}"
-
           mkdir -p "$domain"
-
           wget -O "$domain/wordlist.txt" https://raw.githubusercontent.com/jahanaj098/shhhhhh/refs/heads/main/wordlists/common.txt
+
       - name: Run Directory Bruteforce on 200.txt using ffuf
         run: |
           domain="${{ github.event.inputs.domain }}"
-
+          
           # Run ffuf for each subdomain from 200.txt
           mkdir -p "$domain/ffuf"
-
+          touch "$domain/all_discovered_urls.txt"
+          
           while read subdomain; do
             echo "Running ffuf for $subdomain"
+            output_file="$domain/ffuf/${subdomain}_200_ffuf_results.json"
             ffuf -u "http://$subdomain/FUZZ" \
                  -w "$domain/wordlist.txt" \
                  -t 10 \
                  -ac \
-                 -o "$domain/ffuf/${subdomain}_200_ffuf_results.txt"
+                 -o "$output_file" \
+                 -of json
+            
+            # Extract URLs directly after each ffuf run
+            if [ -f "$output_file" ]; then
+              jq -r '.results[].url' "$output_file" >> "$domain/all_discovered_urls.txt"
+            fi
           done < "$domain/split/200.txt"
+
       - name: Run Directory Bruteforce on 34X.txt using ffuf
         run: |
           domain="${{ github.event.inputs.domain }}"
-
+          
           # Run ffuf for each subdomain from 34X.txt
           mkdir -p "$domain/ffuf"
-
+          
           while read subdomain; do
             echo "Running ffuf for $subdomain"
+            output_file="$domain/ffuf/${subdomain}_34X_ffuf_results.json"
             ffuf -u "http://$subdomain/FUZZ" \
                  -w "$domain/wordlist.txt" \
                  -t 10 \
                  -ac \
-                 -o "$domain/ffuf/${subdomain}_34X_ffuf_results.txt"
+                 -o "$output_file" \
+                 -of json
+            
+            # Extract URLs directly after each ffuf run
+            if [ -f "$output_file" ]; then
+              jq -r '.results[].url' "$output_file" >> "$domain/all_discovered_urls.txt"
+            fi
           done < "$domain/split/34X.txt"
-      - name: Extract all discovered URLs from ffuf results
-        run: >
+
+      - name: Display Results Summary
+        run: |
           domain="${{ github.event.inputs.domain }}"
-
-
-          # Extract all URLs from the 200 ffuf results and 34X ffuf results
-
-          jq -r '.results[].url' "$domain/ffuf/200_ffuf_results.txt" >> "$domain/all_discovered_urls.txt"
-
-          jq -r '.results[].url' "$domain/ffuf/34X_ffuf_results.txt" >> "$domain/all_discovered_urls.txt"
-
-
-          # Display the number of discovered URLs
-
+          
+          echo "=== Results Summary ==="
+          echo "Total subdomains found: $(wc -l < "$domain/subdomains.txt")"
+          echo "Subdomains with 200 status: $(wc -l < "$domain/split/200.txt")"
+          echo "Subdomains with other status codes: $(wc -l < "$domain/split/34X.txt")"
           echo "Total discovered URLs: $(wc -l < "$domain/all_discovered_urls.txt")"
