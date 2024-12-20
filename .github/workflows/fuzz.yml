@@ -115,33 +115,39 @@ jobs:
         run: >
           domain="${{ github.event.inputs.domain }}"
 
-          # Ensure the domain directory exists and has proper write permissions
-
           mkdir -p "$domain"
-
-          # Download the wordlist to the domain folder
 
           wget -O "$domain/wordlist.txt" https://raw.githubusercontent.com/jahanaj098/shhhhhh/refs/heads/main/wordlists/common.txt
       - name: Run Directory Bruteforce on 200.txt using ffuf
-        run: >
+        run: |
           domain="${{ github.event.inputs.domain }}"
 
-
-          # Run ffuf on 200.txt
-
+          # Run ffuf for each subdomain from 200.txt
           mkdir -p "$domain/ffuf"
 
-          cat "$domain/split/200.txt" | ffuf -u FUZZ -w "$domain/wordlist.txt" -t 10 -ac -o "$domain/ffuf/200_ffuf_results.txt"
+          while read subdomain; do
+            echo "Running ffuf for $subdomain"
+            ffuf -u "http://$subdomain/FUZZ" \
+                 -w "$domain/wordlist.txt" \
+                 -t 10 \
+                 -ac \
+                 -o "$domain/ffuf/${subdomain}_200_ffuf_results.txt"
+          done < "$domain/split/200.txt"
       - name: Run Directory Bruteforce on 34X.txt using ffuf
-        run: >
+        run: |
           domain="${{ github.event.inputs.domain }}"
 
-
-          # Run ffuf on 34X.txt
-
+          # Run ffuf for each subdomain from 34X.txt
           mkdir -p "$domain/ffuf"
 
-          cat "$domain/split/34X.txt" | ffuf -u FUZZ -w "$domain/wordlist.txt" -t 10 -ac -o "$domain/ffuf/34X_ffuf_results.txt"
+          while read subdomain; do
+            echo "Running ffuf for $subdomain"
+            ffuf -u "http://$subdomain/FUZZ" \
+                 -w "$domain/wordlist.txt" \
+                 -t 10 \
+                 -ac \
+                 -o "$domain/ffuf/${subdomain}_34X_ffuf_results.txt"
+          done < "$domain/split/34X.txt"
       - name: Extract all discovered URLs from ffuf results
         run: >
           domain="${{ github.event.inputs.domain }}"
