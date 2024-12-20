@@ -34,66 +34,17 @@ jobs:
       - name: Run Subdomain Enumeration
         run: |
           domain="${{ github.event.inputs.domain }}"
-
-          # Create directory for storing results
           mkdir -p $domain
 
-          # Run Subfinder
-          echo "Running Subfinder..."
           subfinder -d "$domain" > "$domain/subfinder.txt"
-
-          # Fetch results from crt.sh
-          echo "Fetching results from crt.sh..."
           curl -s "https://crt.sh/?q=%25.$domain&output=json" | jq -r '.[].name_value' | sed 's/\*\.//g' > "$domain/crtsh.txt"
 
-          # RapidDNS enumeration with pagination
-          echo "Fetching subdomains from RapidDNS..."
-          subdomains_per_page=100
-          output_file="$domain/rapid.txt"
-          > "$output_file"
-
-          # Fetch the total number of subdomains from the first page
-          response=$(curl -s "https://rapiddns.io/subdomain/$domain")
-          total_subdomains=$(echo "$response" | grep -oP '(?<=<span style="color: #39cfca; ">)[0-9,]+(?=</span>)' | sed 's/,//g')
-
-          if [[ -n "$total_subdomains" ]]; then
-              total_pages=$(( (total_subdomains + subdomains_per_page - 1) / subdomains_per_page ))
-
-              # Fetch all pages
-              for (( page=1; page<=total_pages; page++ )); do
-                  echo "Fetching page $page of $total_pages from RapidDNS..."
-                  curl -s "https://rapiddns.io/subdomain/$domain?page=$page" | \
-                  grep -oP '(?<=<td>)[^<]+(?=</td>)' | \
-                  grep -E '^[a-zA-Z0-9.-]+[.][a-zA-Z]{2,}$' | \
-                  sed 's/^[ \t]*//;s/[ \t]*$//' >> "$output_file"
-              done
-          else
-              echo "Could not determine the total number of subdomains from RapidDNS."
-          fi
-
-      - name: Combine All Subdomains into One File
+      - name: Combine All Subdomains
         run: |
           domain="${{ github.event.inputs.domain }}"
-          cat "$domain/subfinder.txt" "$domain/crtsh.txt" "$domain/rapid.txt" | sort -u > "$domain/subdomains.txt"
+          cat "$domain/subfinder.txt" "$domain/crtsh.txt" | sort -u > "$domain/subdomains.txt"
 
-      - name: Send Subdomain List to Telegram Bot
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          domain="${{ github.event.inputs.domain }}"
-          subdomains_file="$domain/subdomains.txt"
-
-          if [ -f "$subdomains_file" ] && [ -s "$subdomains_file" ]; then
-              curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
-                  -F "chat_id=${TELEGRAM_CHAT_ID}" \
-                  -F "document=@${subdomains_file}" \
-                  -F "caption=Subdomains found for $domain"
-          else
-              echo "No subdomains found or file does not exist."
-          fi
-
-      - name: Check HTTP Status Codes using httpx
+      - name: Check HTTP Status Codes
         run: |
           domain="${{ github.event.inputs.domain }}"
           mkdir -p "$domain/httpx"
@@ -107,7 +58,7 @@ jobs:
           grep '\[200\]' "$domain/httpx/urls_with_status.txt" | sed 's/ \[200\]$//' > "$domain/split/200.txt"
           grep '\[3[0-9][0-9]\|\[4[0-9][0-9]\|\[5[0-9][0-9]\]' "$domain/httpx/urls_with_status.txt" | sed 's/ \[[0-9]\{3\}\]$//' > "$domain/split/34X.txt"
 
-      - name: Notify Telegram Bot with Sorted Results
+      - name: Notify Telegram Bot with Sorted Results and Files
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -122,58 +73,16 @@ jobs:
               -d "chat_id=${TELEGRAM_CHAT_ID}" \
               -d "text=$message"
 
-      - name: Download Wordlist
-        run: |
-          domain="${{ github.event.inputs.domain }}"
-          mkdir -p "$domain"
-          wget -O "$domain/wordlist.txt" https://raw.githubusercontent.com/jahanaj098/shhhhhh/refs/heads/main/wordlists/common.txt
+          if [ -s "$domain/split/200.txt" ]; then
+              curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+                  -F "chat_id=${TELEGRAM_CHAT_ID}" \
+                  -F "document=@${domain}/split/200.txt" \
+                  -F "caption=URLs with status 200 for $domain"
+          fi
 
-      - name: Run Directory Bruteforce on 200.txt using ffuf
-        run: |
-          domain="${{ github.event.inputs.domain }}"
-          mkdir -p "$domain/ffuf"
-          touch "$domain/all_discovered_urls.txt"
-
-          while read subdomain; do
-            echo "Running ffuf for $subdomain"
-            output_file="$domain/ffuf/${subdomain}_200_ffuf_results.json"
-            ffuf -u "$subdomain/FUZZ" \
-                 -w "$domain/wordlist.txt" \
-                 -t 10 \
-                 -ac \
-                 -o "$output_file" \
-                 -of json
-
-            if [ -f "$output_file" ]; then
-              jq -r '.results[].url' "$output_file" >> "$domain/all_discovered_urls.txt"
-            fi
-          done < "$domain/split/200.txt"
-
-      - name: Run Directory Bruteforce on 34X.txt using ffuf
-        run: |
-          domain="${{ github.event.inputs.domain }}"
-          mkdir -p "$domain/ffuf"
-
-          while read subdomain; do
-            echo "Running ffuf for $subdomain"
-            output_file="$domain/ffuf/${subdomain}_34X_ffuf_results.json"
-            ffuf -u "$subdomain/FUZZ" \
-                 -w "$domain/wordlist.txt" \
-                 -t 10 \
-                 -ac \
-                 -o "$output_file" \
-                 -of json
-
-            if [ -f "$output_file" ]; then
-              jq -r '.results[].url' "$output_file" >> "$domain/all_discovered_urls.txt"
-            fi
-          done < "$domain/split/34X.txt"
-
-      - name: Display Results Summary
-        run: |
-          domain="${{ github.event.inputs.domain }}"
-          echo "=== Results Summary ==="
-          echo "Total subdomains found: $(wc -l < "$domain/subdomains.txt")"
-          echo "Subdomains with 200 status: $(wc -l < "$domain/split/200.txt")"
-          echo "Subdomains with other status codes: $(wc -l < "$domain/split/34X.txt")"
-          echo "Total discovered URLs: $(wc -l < "$domain/all_discovered_urls.txt")"
+          if [ -s "$domain/split/34X.txt" ]; then
+              curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+                  -F "chat_id=${TELEGRAM_CHAT_ID}" \
+                  -F "document=@${domain}/split/34X.txt" \
+                  -F "caption=URLs with status 3XX, 4XX, or 5XX for $domain"
+          fi
