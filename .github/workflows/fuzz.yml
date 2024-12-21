@@ -169,15 +169,29 @@ jobs:
               ffuf -w "$wordlist" -u "$url/FUZZ" -ac -o "$domain/ffuf/${sanitized_url}_34X_ffuf_results.txt"
           done < "$urls_file"
 
-      - name: Count Files in ffuf Folder
+      - name: Zip and Send ffuf Folder to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           domain="${{ github.event.inputs.domain }}"
-          
-          # Count the number of files in the ffuf folder
-          ffuf_results_count=$(ls "$domain/ffuf" | wc -l)
-          echo "Number of files saved in the ffuf folder: $ffuf_results_count"
-          
-          # Optionally, you can send this count to Telegram if needed
-          # curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-          #     -F "chat_id=${TELEGRAM_CHAT_ID}" \
-          #     -F "text=Number of ffuf result files: $ffuf_results_count"
+
+          ffuf_folder="$domain/ffuf"
+
+          zip_file="$domain/ffuf_results.zip"
+
+          # Create a zip file containing all the files in the ffuf folder
+          zip -r "$zip_file" "$ffuf_folder"
+
+          # Check if the zip file was successfully created
+          if [ -f "$zip_file" ]; then
+              echo "Zip file created successfully: $zip_file"
+              
+              # Send the zip file to Telegram
+              curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+                  -F "chat_id=${TELEGRAM_CHAT_ID}" \
+                  -F "document=@${zip_file}" \
+                  -F "caption=All ffuf results for $domain"
+          else
+              echo "Failed to create zip file."
+          fi
