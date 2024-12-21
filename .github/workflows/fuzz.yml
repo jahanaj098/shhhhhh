@@ -210,6 +210,20 @@ jobs:
               echo "Failed to create urls.txt."
           fi
 
+      - name: Remove Status Codes from URLs and Create New File
+        run: |
+          domain="${{ github.event.inputs.domain }}"
+          urls_file="$domain/urls.txt"
+          new_urls_file="$domain/urls_without_status.txt"
+
+          # Check if the urls.txt file exists and is not empty
+          if [ -f "$urls_file" ] && [ -s "$urls_file" ]; then
+              # Extract only URLs (remove status codes) and save to new file
+              awk '{print $1}' "$urls_file" > "$new_urls_file"
+          else
+              echo "The file $urls_file does not exist or is empty."
+          fi
+
       - name: Send URLs without Status Code to Telegram Bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -225,5 +239,5 @@ jobs:
                   -F "document=@${urls_file}" \
                   -F "caption=URLs without status code for $domain"
           else
-              echo "No URLs found or file does not exist."
+              echo "The file $urls_file does not exist or is empty."
           fi
