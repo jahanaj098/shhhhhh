@@ -37,6 +37,7 @@ jobs:
 
           # Create directory for storing results
           mkdir -p "$domain"
+          mkdir -p "$domain/ffuf"
 
           # Run Subfinder
           echo "Running Subfinder..."
@@ -101,7 +102,7 @@ jobs:
       - name: Split URLs by Status Code
         run: |
           domain="${{ github.event.inputs.domain }}"
-          
+
           grep '200' "$domain/urls_with_status.txt" | sed 's/\x1b\[[0-9;]*m//g' | sed 's/ \[200\]//g' > "$domain/200.txt"
 
           grep -E '[0-9]{3}' "$domain/urls_with_status.txt" | sed 's/ \[[0-9]*\]$//' | sed 's/ \[.*\]//' > "$domain/34X.txt"
@@ -139,15 +140,18 @@ jobs:
           domain="${{ github.event.inputs.domain }}"
           wordlist="$domain/wordlist.txt"
           urls_file="$domain/200.txt"
-          
+
+          # Create ffuf folder if not exists
+          mkdir -p "$domain/ffuf"
+
           # Loop over each URL in the 200.txt file
           while IFS= read -r url; do
               # Sanitize the URL to create a valid file name
               sanitized_url=$(echo "$url" | sed 's/^https\?:\/\///' | sed 's/\//_/g')
-              
+
               # Run ffuf with the sanitized URL
               echo "Running ffuf on $url..."
-              ffuf -w "$wordlist" -u "$url/FUZZ" -ac -o "$domain/${sanitized_url}_200_ffuf_results.txt"
+              ffuf -w "$wordlist" -u "$url/FUZZ" -ac -o "$domain/ffuf/${sanitized_url}_200_ffuf_results.txt"
           done < "$urls_file"
 
       - name: Perform Directory Fuzzing on 34X URLs
@@ -155,16 +159,20 @@ jobs:
           domain="${{ github.event.inputs.domain }}"
           wordlist="$domain/wordlist.txt"
           urls_file="$domain/34X.txt"
-          
+
+          # Create ffuf folder if not exists
+          mkdir -p "$domain/ffuf"
+
           # Loop over each URL in the 34X.txt file
           while IFS= read -r url; do
               # Sanitize the URL to create a valid file name
               sanitized_url=$(echo "$url" | sed 's/^https\?:\/\///' | sed 's/\//_/g')
-              
+
               # Run ffuf with the sanitized URL
               echo "Running ffuf on $url..."
-              ffuf -w "$wordlist" -u "$url/FUZZ" -ac -o "$domain/${sanitized_url}_34X_ffuf_results.txt"
+              ffuf -w "$wordlist" -u "$url/FUZZ" -ac -o "$domain/ffuf/${sanitized_url}_34X_ffuf_results.txt"
           done < "$urls_file"
+
       - name: Aggregate All ffuf Results and Send to Telegram Bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -176,8 +184,12 @@ jobs:
           combined_results="$domain/combined_ffuf_results.txt"
           > "$combined_results"
 
-          # Append all ffuf result files into the combined file
-          for result_file in "$domain"/*_200_ffuf_results.txt; do
+          # Append all ffuf result files into the combined file from the $domain/ffuf folder
+          for result_file in "$domain/ffuf/*_200_ffuf_results.txt"; do
+              cat "$result_file" >> "$combined_results"
+          done
+
+          for result_file in "$domain/ffuf/*_34X_ffuf_results.txt"; do
               cat "$result_file" >> "$combined_results"
           done
 
@@ -186,7 +198,5 @@ jobs:
               curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
                   -F "chat_id=${TELEGRAM_CHAT_ID}" \
                   -F "document=@${combined_results}" \
-                  -F "caption=Aggregated ffuf results for $domain"
-          else
-              echo "No ffuf results found to send."
+                  -F "caption=Combined ffuf Results for $domain"
           fi
