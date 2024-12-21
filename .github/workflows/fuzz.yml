@@ -185,23 +185,27 @@ jobs:
               echo "Failed to create fuzzfile.txt."
           fi
 
-      - name: Send fuzzfile.txt to Telegram Bot
+      - name: Extract URLs and Status Codes
+        run: |
+          domain="${{ github.event.inputs.domain }}"
+          jq -r '.results[] | "\(.url) \(.status)"' "$domain/fuzzfile.txt" | sort -t ' ' -k2,2n > "$domain/urls.txt"
+
+      - name: Send URLs to Telegram Bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           domain="${{ github.event.inputs.domain }}"
-          fuzzfile="$domain/fuzzfile.txt"
+          urls_file="$domain/urls.txt"
 
-          # Check if the fuzzfile was successfully created
-          if [ -f "$fuzzfile" ]; then
-              echo "fuzzfile.txt created successfully: $fuzzfile"
-              
-              # Send fuzzfile.txt to Telegram
+          if [ -f "$urls_file" ]; then
+              echo "urls.txt created successfully: $urls_file"
+
+              # Send urls.txt to Telegram
               curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
                   -F "chat_id=${TELEGRAM_CHAT_ID}" \
-                  -F "document=@${fuzzfile}" \
-                  -F "caption=Combined ffuf results for $domain"
+                  -F "document=@${urls_file}" \
+                  -F "caption=Sorted URLs for $domain"
           else
-              echo "Failed to create fuzzfile.txt."
+              echo "Failed to create urls.txt."
           fi
