@@ -209,3 +209,21 @@ jobs:
           else
               echo "Failed to create urls.txt."
           fi
+
+      - name: Send URLs without Status Code to Telegram Bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          domain="${{ github.event.inputs.domain }}"
+          urls_file="$domain/urls_without_status.txt"
+
+          # Check if the urls_without_status.txt file exists and is not empty
+          if [ -f "$urls_file" ] && [ -s "$urls_file" ]; then
+              curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+                  -F "chat_id=${TELEGRAM_CHAT_ID}" \
+                  -F "document=@${urls_file}" \
+                  -F "caption=URLs without status code for $domain"
+          else
+              echo "No URLs found or file does not exist."
+          fi
