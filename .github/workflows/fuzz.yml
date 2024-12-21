@@ -140,14 +140,17 @@ jobs:
           wordlist="$domain/wordlist.txt"
           urls_file="$domain/200.txt"
           
+          # Create the ffuf folder to store results
+          mkdir -p "$domain/ffuf"
+
           # Loop over each URL in the 200.txt file
           while IFS= read -r url; do
               # Sanitize the URL to create a valid file name
               sanitized_url=$(echo "$url" | sed 's/^https\?:\/\///' | sed 's/\//_/g')
               
-              # Run ffuf with the sanitized URL
+              # Run ffuf with the sanitized URL and save results in the ffuf folder
               echo "Running ffuf on $url..."
-              ffuf -w "$wordlist" -u "$url/FUZZ" -ac -o "$domain/${sanitized_url}_200_ffuf_results.txt"
+              ffuf -w "$wordlist" -u "$url/FUZZ" -ac -o "$domain/ffuf/${sanitized_url}_200_ffuf_results.txt"
           done < "$urls_file"
 
       - name: Perform Directory Fuzzing on 34X URLs
@@ -161,32 +164,20 @@ jobs:
               # Sanitize the URL to create a valid file name
               sanitized_url=$(echo "$url" | sed 's/^https\?:\/\///' | sed 's/\//_/g')
               
-              # Run ffuf with the sanitized URL
+              # Run ffuf with the sanitized URL and save results in the ffuf folder
               echo "Running ffuf on $url..."
-              ffuf -w "$wordlist" -u "$url/FUZZ" -ac -o "$domain/${sanitized_url}_34X_ffuf_results.txt"
+              ffuf -w "$wordlist" -u "$url/FUZZ" -ac -o "$domain/ffuf/${sanitized_url}_34X_ffuf_results.txt"
           done < "$urls_file"
-      - name: Aggregate All ffuf Results and Send to Telegram Bot
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      - name: Count Files in ffuf Folder
         run: |
           domain="${{ github.event.inputs.domain }}"
           
-          # Create a combined results file
-          combined_results="$domain/combined_ffuf_results.txt"
-          > "$combined_results"
-
-          # Append all ffuf result files into the combined file
-          for result_file in "$domain"/*_200_ffuf_results.txt; do
-              cat "$result_file" >> "$combined_results"
-          done
-
-          # Send the combined results to Telegram as a .txt file
-          if [ -f "$combined_results" ] && [ -s "$combined_results" ]; then
-              curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
-                  -F "chat_id=${TELEGRAM_CHAT_ID}" \
-                  -F "document=@${combined_results}" \
-                  -F "caption=Aggregated ffuf results for $domain"
-          else
-              echo "No ffuf results found to send."
-          fi
+          # Count the number of files in the ffuf folder
+          ffuf_results_count=$(ls "$domain/ffuf" | wc -l)
+          echo "Number of files saved in the ffuf folder: $ffuf_results_count"
+          
+          # Optionally, you can send this count to Telegram if needed
+          # curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+          #     -F "chat_id=${TELEGRAM_CHAT_ID}" \
+          #     -F "text=Number of ffuf result files: $ffuf_results_count"
